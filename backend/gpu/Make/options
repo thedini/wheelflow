@@ -1,0 +1,16 @@
+AMGX_DIR = /home/constantine/local/amgx
+CUDA_DIR = /usr/local/cuda-12.9
+
+EXE_INC = \
+    -I$(LIB_SRC)/finiteVolume/lnInclude \
+    -I$(LIB_SRC)/meshTools/lnInclude \
+    -I$(AMGX_DIR)/include \
+    -I$(CUDA_DIR)/include
+
+LIB_LIBS = \
+    -lfiniteVolume \
+    -lmeshTools \
+    -L$(AMGX_DIR) -lamgxsh \
+    -L$(CUDA_DIR)/lib64 -lcudart -lcublas -lcusparse -lcusolver \
+    -Wl,-rpath,$(AMGX_DIR) \
+    -Wl,-rpath,$(CUDA_DIR)/lib64

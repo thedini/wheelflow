@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WheelFlow - Bicycle Wheel CFD Analysis</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                    <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+                    <circle cx="16" cy="16" r="6" stroke="currentColor" stroke-width="2"/>
+                    <line x1="16" y1="2" x2="16" y2="10" stroke="currentColor" stroke-width="2"/>
+                    <line x1="16" y1="22" x2="16" y2="30" stroke="currentColor" stroke-width="2"/>
+                    <line x1="2" y1="16" x2="10" y2="16" stroke="currentColor" stroke-width="2"/>
+                    <line x1="22" y1="16" x2="30" y2="16" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                <h1>WheelFlow</h1>
+            </div>
+            <nav class="nav">
+                <button class="nav-btn active" data-view="upload">Upload</button>
+                <button class="nav-btn" data-view="jobs">Simulations</button>
+                <button class="nav-btn" data-view="results">Results</button>
+            </nav>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Upload View -->
+            <section id="upload-view" class="view active">
+                <div class="upload-container">
+                    <!-- Left: Upload & Config -->
+                    <div class="config-panel">
+                        <div class="panel-section">
+                            <h2>1. Upload Geometry</h2>
+                            <div class="upload-zone" id="upload-zone">
+                                <input type="file" id="file-input" accept=".stl,.obj" hidden>
+                                <div class="upload-content">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    <p>Drag & drop STL or OBJ file</p>
+                                    <span>or click to browse</span>
+                                </div>
+                            </div>
+                            <div id="file-info" class="file-info hidden">
+                                <span class="file-name"></span>
+                                <span class="file-size"></span>
+                                <button class="btn-clear" onclick="clearUpload()">×</button>
+                            </div>
+                        </div>
+
+                        <div class="panel-section">
+                            <h2>2. Simulation Parameters</h2>
+                            <form id="sim-form">
+                                <div class="form-group">
+                                    <label for="sim-name">Simulation Name</label>
+                                    <input type="text" id="sim-name" placeholder="e.g., TTTR28_22_TSV3" required>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="speed">Speed (m/s)</label>
+                                        <input type="number" id="speed" value="13.9" step="0.1" min="1" max="50">
+                                        <span class="unit-hint" id="speed-hint">≈ 50 km/h</span>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="wheel-radius">Wheel Radius (m)</label>
+                                        <input type="number" id="wheel-radius" value="0.325" step="0.001" min="0.1" max="0.5">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="yaw-angles">Yaw Angles (degrees)</label>
+                                    <input type="text" id="yaw-angles" value="0, 5, 10, 15, 20" placeholder="0, 5, 10, 15, 20">
+                                    <span class="unit-hint">Comma-separated values</span>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Ground Simulation</label>
+                                    <div class="toggle-row">
+                                        <label class="toggle">
+                                            <input type="checkbox" id="ground-enabled" checked>
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label">Ground enabled</span>
+                                        </label>
+                                        <select id="ground-type">
+                                            <option value="moving">Moving (belt)</option>
+                                            <option value="slip">Slip</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Wheel Rotation</label>
+                                    <div class="toggle-row">
+                                        <label class="toggle">
+                                            <input type="checkbox" id="rolling-enabled" checked>
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label">Wheel rotation enabled</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Solver Acceleration</label>
+                                    <div class="toggle-row">
+                                        <label class="toggle">
+                                            <input type="checkbox" id="gpu-acceleration">
+                                            <span class="toggle-slider"></span>
+                                            <span class="toggle-label">GPU (RTX 3090)</span>
+                                        </label>
+                                    </div>
+                                    <small class="form-hint">Uses AmgX for pressure solver - requires ~15GB VRAM</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="quality">Mesh Quality</label>
+                                    <select id="quality">
+                                        <option value="basic">Basic (~500k cells) - Fast</option>
+                                        <option value="standard" selected>Standard (~2M cells)</option>
+                                        <option value="pro">Pro (~6M cells) - Accurate</option>
+                                    </select>
+                                </div>
+
+                                <div class="btn-wrapper">
+                                    <button type="submit" class="btn-primary" id="run-btn" disabled>
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polygon points="5 3 19 12 5 21 5 3"/>
+                                        </svg>
+                                        Run Simulation
+                                    </button>
+                                    <span class="btn-validation-msg" id="validation-msg">
+                                        ⚠ Upload a geometry file first
+                                    </span>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Right: 3D Viewer -->
+                    <div class="viewer-panel">
+                        <div class="viewer-header">
+                            <h2>3D Preview</h2>
+                            <div class="viewer-controls">
+                                <button class="btn-icon" onclick="resetCamera()" title="Reset view">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                                        <path d="M3 3v5h5"/>
+                                    </svg>
+                                </button>
+                                <button class="btn-icon" onclick="toggleWireframe()" title="Toggle wireframe">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="3" y1="9" x2="21" y2="9"/>
+                                        <line x1="3" y1="15" x2="21" y2="15"/>
+                                        <line x1="9" y1="3" x2="9" y2="21"/>
+                                        <line x1="15" y1="3" x2="15" y2="21"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="viewer-container">
+                            <div class="viewer-placeholder">
+                                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                    <path d="M2 17l10 5 10-5"/>
+                                    <path d="M2 12l10 5 10-5"/>
+                                </svg>
+                                <p>Upload a model to preview</p>
+                            </div>
+                        </div>
+                        <div class="geometry-info hidden" id="geometry-info">
+                            <div class="info-item">
+                                <span class="info-label">Triangles</span>
+                                <span class="info-value" id="info-triangles">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Dimensions</span>
+                                <span class="info-value" id="info-dimensions">-</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Center</span>
+                                <span class="info-value" id="info-center">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Jobs View -->
+            <section id="jobs-view" class="view">
+                <div class="jobs-container">
+                    <h2>Simulations</h2>
+                    <div id="jobs-list" class="jobs-list">
+                        <div class="empty-state" id="jobs-empty">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            <h3>No simulations yet</h3>
+                            <p>Upload a wheel geometry and configure your simulation to get started.</p>
+                            <button class="btn-cta" onclick="showView('upload')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="17 8 12 3 7 8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                                Upload Geometry
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results View -->
+            <section id="results-view" class="view">
+                <div class="results-container">
+                    <h2>Results</h2>
+                    <div id="results-content" class="results-content">
+                        <div class="empty-state" id="results-empty">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>
+                                <path d="M22 12A10 10 0 0 0 12 2v10z"/>
+                            </svg>
+                            <h3>No results to display</h3>
+                            <p>Run a simulation first, then come back here to view your aerodynamic analysis.</p>
+                            <button class="btn-cta" onclick="showView('jobs')">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polyline points="12 6 12 12 16 14"/>
+                                </svg>
+                                View Simulations
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>WheelFlow v0.1 - OpenFOAM CFD for Bicycle Wheels</span>
+        </footer>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

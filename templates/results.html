@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WheelFlow - Performance Dashboard</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Top Bar - Race Style Header -->
+        <header class="top-bar">
+            <div class="logo-section">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 40 40" fill="none">
+                        <circle cx="20" cy="20" r="18" stroke="currentColor" stroke-width="2"/>
+                        <circle cx="20" cy="20" r="8" stroke="currentColor" stroke-width="2"/>
+                        <line x1="20" y1="2" x2="20" y2="12" stroke="currentColor" stroke-width="2"/>
+                        <line x1="20" y1="28" x2="20" y2="38" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <span class="brand">WHEELFLOW</span>
+                    <span class="tagline">AERO TELEMETRY</span>
+                </div>
+            </div>
+            <div class="session-info">
+                <div class="session-name" id="session-name">TSV3.4 - PRO ANALYSIS</div>
+                <div class="session-status">
+                    <span class="status-dot live"></span>
+                    <span id="session-status">LIVE</span>
+                </div>
+            </div>
+            <div class="timing-display">
+                <div class="time-label">ELAPSED</div>
+                <div class="time-value" id="elapsed-time">00:00:00</div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            <!-- Left Column - Key Metrics -->
+            <section class="metrics-column">
+                <!-- Primary Metric - CdA -->
+                <div class="metric-card primary">
+                    <div class="metric-header">
+                        <span class="metric-label">CdA</span>
+                        <span class="metric-unit">cm²</span>
+                    </div>
+                    <div class="metric-value-large" id="cda-value">--</div>
+                    <div class="metric-delta" id="cda-delta">
+                        <span class="delta-arrow">▼</span>
+                        <span class="delta-value">--</span>
+                        <span class="delta-label">vs reference</span>
+                    </div>
+                    <div class="metric-gauge">
+                        <div class="gauge-track">
+                            <div class="gauge-fill" id="cda-gauge" style="width: 0%"></div>
+                        </div>
+                        <div class="gauge-labels">
+                            <span>0</span>
+                            <span>TARGET: 110</span>
+                            <span>200</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Secondary Metrics Row -->
+                <div class="metrics-row">
+                    <div class="metric-card secondary">
+                        <div class="metric-icon drag">
+                            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </div>
+                        <div class="metric-content">
+                            <span class="metric-label">DRAG</span>
+                            <span class="metric-value" id="drag-value">--</span>
+                            <span class="metric-unit">N</span>
+                        </div>
+                    </div>
+                    <div class="metric-card secondary">
+                        <div class="metric-icon lift">
+                            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                        </div>
+                        <div class="metric-content">
+                            <span class="metric-label">LIFT</span>
+                            <span class="metric-value" id="lift-value">--</span>
+                            <span class="metric-unit">N</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coefficient Cards -->
+                <div class="coefficients-grid">
+                    <div class="coef-card">
+                        <span class="coef-label">Cd</span>
+                        <span class="coef-value" id="cd-value">--</span>
+                    </div>
+                    <div class="coef-card">
+                        <span class="coef-label">Cl</span>
+                        <span class="coef-value" id="cl-value">--</span>
+                    </div>
+                    <div class="coef-card">
+                        <span class="coef-label">Cm</span>
+                        <span class="coef-value" id="cm-value">--</span>
+                    </div>
+                    <div class="coef-card">
+                        <span class="coef-label">Re</span>
+                        <span class="coef-value" id="re-value">--</span>
+                    </div>
+                </div>
+
+                <!-- Speed Display -->
+                <div class="speed-display">
+                    <div class="speed-dial">
+                        <svg viewBox="0 0 120 70" class="dial-svg">
+                            <path d="M 10 60 A 50 50 0 0 1 110 60" class="dial-track"/>
+                            <path d="M 10 60 A 50 50 0 0 1 110 60" class="dial-fill" id="speed-dial-fill"/>
+                        </svg>
+                        <div class="speed-value">
+                            <span id="speed-value">50</span>
+                            <span class="speed-unit">km/h</span>
+                        </div>
+                    </div>
+                    <div class="speed-info">
+                        <div class="info-item">
+                            <span class="info-label">FLOW VELOCITY</span>
+                            <span class="info-value" id="velocity-ms">13.9 m/s</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">YAW ANGLE</span>
+                            <span class="info-value" id="yaw-angle">0°</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Center Column - Visualizations -->
+            <section class="viz-column">
+                <!-- Convergence Chart -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>CONVERGENCE TELEMETRY</h3>
+                        <div class="chart-controls">
+                            <button class="chart-btn active" data-series="cd">Cd</button>
+                            <button class="chart-btn" data-series="residuals">Residuals</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="convergence-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 3D Viewer -->
+                <div class="viewer-card">
+                    <div class="viewer-header">
+                        <h3>3D PRESSURE MAP</h3>
+                        <div class="viewer-controls">
+                            <button class="view-btn" data-view="front" title="Front View (Y-Z plane)">Front</button>
+                            <button class="view-btn" data-view="side" title="Side View (X-Z plane)">Side</button>
+                            <button class="view-btn" data-view="top" title="Top View (X-Y plane)">Top</button>
+                            <button class="view-btn active" data-view="iso" title="Isometric 3D View">3D</button>
+                        </div>
+                    </div>
+                    <div class="viewer-container" id="pressure-viewer">
+                        <div class="viewer-placeholder">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.5; margin-bottom: 8px;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <circle cx="12" cy="12" r="4"/>
+                                <line x1="12" y1="2" x2="12" y2="6"/>
+                                <line x1="12" y1="18" x2="12" y2="22"/>
+                            </svg>
+                            <span>Initializing 3D viewer...</span>
+                        </div>
+                    </div>
+                    <div class="colorbar">
+                        <div class="colorbar-gradient"></div>
+                        <div class="colorbar-labels">
+                            <span>-0.6</span>
+                            <span>Cp</span>
+                            <span>1.0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Column - Analysis -->
+            <section class="analysis-column">
+                <!-- Simulation Progress -->
+                <div class="progress-card">
+                    <div class="progress-header">
+                        <h3>SIMULATION STATUS</h3>
+                        <span class="progress-percent" id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <div class="progress-stages">
+                        <div class="stage completed" data-stage="upload">
+                            <div class="stage-dot"></div>
+                            <span>UPLOAD</span>
+                        </div>
+                        <div class="stage active" data-stage="mesh">
+                            <div class="stage-dot"></div>
+                            <span>MESHING</span>
+                        </div>
+                        <div class="stage" data-stage="solve">
+                            <div class="stage-dot"></div>
+                            <span>SOLVING</span>
+                        </div>
+                        <div class="stage" data-stage="post">
+                            <div class="stage-dot"></div>
+                            <span>POST</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mesh Stats -->
+                <div class="stats-card">
+                    <h3>MESH STATISTICS</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value" id="cell-count">--</span>
+                            <span class="stat-label">CELLS</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="face-count">--</span>
+                            <span class="stat-label">FACES</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="quality-level">PRO</span>
+                            <span class="stat-label">QUALITY</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="iterations">0</span>
+                            <span class="stat-label">ITERATIONS</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Comparison Card -->
+                <div class="comparison-card">
+                    <h3>VS AEROCLOUD REFERENCE</h3>
+                    <div class="comparison-table">
+                        <div class="comp-row header">
+                            <span>METRIC</span>
+                            <span>CURRENT</span>
+                            <span>TARGET</span>
+                            <span>DIFF</span>
+                        </div>
+                        <div class="comp-row" id="comp-drag">
+                            <span>Drag (N)</span>
+                            <span class="current">--</span>
+                            <span class="target">1.31</span>
+                            <span class="diff">--</span>
+                        </div>
+                        <div class="comp-row" id="comp-cda">
+                            <span>CdA (cm²)</span>
+                            <span class="current">--</span>
+                            <span class="target">110</span>
+                            <span class="diff">--</span>
+                        </div>
+                        <div class="comp-row" id="comp-cd">
+                            <span>Cd</span>
+                            <span class="current">--</span>
+                            <span class="target">0.490</span>
+                            <span class="diff">--</span>
+                        </div>
+                    </div>
+                    <div class="comparison-note">
+                        <span class="note-icon">ℹ</span>
+                        <span id="comparison-note">Reference at 15° yaw</span>
+                    </div>
+                </div>
+
+                <!-- Yaw Polar Plot -->
+                <div class="polar-card">
+                    <h3>YAW SWEEP ANALYSIS</h3>
+                    <div class="polar-container">
+                        <canvas id="yaw-polar-chart"></canvas>
+                    </div>
+                    <div class="yaw-selector">
+                        <button class="yaw-btn active" data-yaw="0">0°</button>
+                        <button class="yaw-btn" data-yaw="5">5°</button>
+                        <button class="yaw-btn" data-yaw="10">10°</button>
+                        <button class="yaw-btn" data-yaw="15">15°</button>
+                        <button class="yaw-btn" data-yaw="20">20°</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Bar - Live Telemetry -->
+        <footer class="telemetry-bar">
+            <!-- Tachometer Gauges -->
+            <div class="tach-group">
+                <div class="tachometer" id="cpu-tach">
+                    <svg viewBox="0 0 100 60" class="tach-svg">
+                        <defs>
+                            <linearGradient id="tach-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" style="stop-color:#00d26a"/>
+                                <stop offset="60%" style="stop-color:#ffd700"/>
+                                <stop offset="100%" style="stop-color:#e10600"/>
+                            </linearGradient>
+                        </defs>
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-track"/>
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-fill" id="cpu-tach-fill"/>
+                        <circle cx="50" cy="55" r="3" class="tach-pivot"/>
+                        <line x1="50" y1="55" x2="50" y2="20" class="tach-needle" id="cpu-needle"/>
+                    </svg>
+                    <div class="tach-label">CPU</div>
+                    <div class="tach-value" id="cpu-value">0%</div>
+                </div>
+                <div class="tachometer" id="mem-tach">
+                    <svg viewBox="0 0 100 60" class="tach-svg">
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-track"/>
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-fill" id="mem-tach-fill"/>
+                        <circle cx="50" cy="55" r="3" class="tach-pivot"/>
+                        <line x1="50" y1="55" x2="50" y2="20" class="tach-needle" id="mem-needle"/>
+                    </svg>
+                    <div class="tach-label">RAM</div>
+                    <div class="tach-value" id="mem-value">0%</div>
+                </div>
+                <div class="tachometer" id="gpu-tach">
+                    <svg viewBox="0 0 100 60" class="tach-svg">
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-track"/>
+                        <path d="M 10 55 A 40 40 0 0 1 90 55" class="tach-fill" id="gpu-tach-fill"/>
+                        <circle cx="50" cy="55" r="3" class="tach-pivot"/>
+                        <line x1="50" y1="55" x2="50" y2="20" class="tach-needle" id="gpu-needle"/>
+                    </svg>
+                    <div class="tach-label">GPU</div>
+                    <div class="tach-value" id="gpu-value">N/A</div>
+                </div>
+            </div>
+
+            <div class="telemetry-divider"></div>
+
+            <!-- OpenFOAM Status -->
+            <div class="of-status">
+                <div class="of-indicator">
+                    <span class="of-dot" id="of-status-dot"></span>
+                    <span class="of-solver" id="solver-name">IDLE</span>
+                </div>
+                <div class="of-stats">
+                    <div class="of-stat">
+                        <span class="of-label">ITER</span>
+                        <span class="of-value" id="of-iteration">0</span>
+                    </div>
+                    <div class="of-stat">
+                        <span class="of-label">RES</span>
+                        <span class="of-value residual" id="residual-value">--</span>
+                    </div>
+                    <div class="of-stat">
+                        <span class="of-label">MPI</span>
+                        <span class="of-value" id="mpi-ranks">1</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="telemetry-divider"></div>
+
+            <!-- Cache & Disk -->
+            <div class="telemetry-item">
+                <span class="telem-label">CACHE</span>
+                <div class="telem-bar">
+                    <div class="telem-fill cache" id="cache-usage" style="width: 0%"></div>
+                </div>
+                <span class="telem-value" id="cache-value">0 GB</span>
+            </div>
+            <div class="telemetry-item">
+                <span class="telem-label">DISK</span>
+                <div class="telem-bar">
+                    <div class="telem-fill" id="disk-usage" style="width: 0%"></div>
+                </div>
+                <span class="telem-value" id="disk-value">0%</span>
+            </div>
+
+            <div class="telemetry-spacer"></div>
+            <div class="export-buttons">
+                <button class="export-btn" onclick="exportPDF()">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+                    PDF
+                </button>
+                <button class="export-btn" onclick="exportCSV()">
+                    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                    CSV
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+    <script>
+        // Initialize dashboard with job ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const jobId = urlParams.get('job') || '{{ job_id }}';
+        if (jobId) {
+            initDashboard(jobId);
+        }
+    </script>
+</body>
+</html>

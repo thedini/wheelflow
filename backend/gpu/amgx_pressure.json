@@ -1,0 +1,19 @@
+{
+    "config_version": 2,
+    "solver": {
+        "solver": "AMG",
+        "presweeps": 2,
+        "postsweeps": 2,
+        "max_levels": 20,
+        "cycle": "V",
+        "coarsest_sweeps": 4,
+        "coarse_solver": "DENSE_LU_SOLVER",
+        "smoother": "JACOBI_L1",
+        "selector": "PMIS",
+        "interpolator": "D2",
+        "convergence": "RELATIVE_INI_CORE",
+        "max_iters": 100,
+        "tolerance": 1e-6,
+        "norm": "L2"
+    }
+}
