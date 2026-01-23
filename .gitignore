@@ -47,6 +47,11 @@ Thumbs.db
 # Node modules (if any frontend build tools added)
 node_modules/
 
+# OpenFOAM compiled objects
+*.o
+*.dep
+*/Make/linux64*
+
 # Environment variables (if added later)
 .env
 .env.local
