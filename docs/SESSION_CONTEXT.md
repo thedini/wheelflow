@@ -216,3 +216,169 @@ journalctl --user -u wheelflow -f
 - Cd = 0.144, Cl = 0.078
 - Drag = 1.71 N at 13.9 m/s
 Thu Jan 22 08:28:20 PM EST 2026
+
+---
+
+## Phase 5: Export & Polish - COMPLETE
+**Date**: 2026-01-24
+
+### What Was Implemented
+
+**Export Reports functionality** (per `planning/DEVELOPMENT_ROADMAP.md` Phase 5)
+
+### Libraries Added (via CDN in `templates/results.html`)
+- **jsPDF 2.5.1** - PDF generation
+- **jsPDF-AutoTable 3.8.1** - PDF table formatting
+- **SheetJS (xlsx) 0.20.1** - Excel export
+
+### New Export Functions (`static/js/dashboard.js`)
+
+| Function | Output | Description |
+|----------|--------|-------------|
+| `exportPDF()` | .pdf | 3-page branded report (cover, results, convergence) |
+| `exportExcel()` | .xlsx | 5-sheet workbook (Summary, Forces, Coefficients, Input, Convergence) |
+| `exportCSV()` | .csv | Enhanced sectioned CSV |
+| `exportChartImage()` | .png | High-res convergence chart |
+| `toggleExportMenu()` | - | Dropdown toggle |
+
+### UI Changes
+- Added dropdown menu in footer replacing simple buttons
+- Blue gradient "EXPORT" button with animated dropdown
+- Menu items with icons and descriptions
+- Loading state animation during export
+
+### Files Modified
+```
+templates/results.html          +7 lines (CDN scripts + dropdown HTML)
+static/css/dashboard.css        +120 lines (dropdown styles)
+static/js/dashboard.js          +350 lines (export functions)
+```
+
+### PDF Report Structure
+1. **Page 1 - Cover**: WheelFlow logo, simulation name, key CdA result, quality badge
+2. **Page 2 - Results**: Input parameters table, key metrics table, AeroCloud comparison
+3. **Page 3 - Analysis**: Convergence chart image, statistics, methodology
+
+### Excel Workbook Sheets
+1. **Summary** - Simulation info + key results
+2. **Forces** - Drag, lift, side forces + moments
+3. **Coefficients** - Cd, Cl, Cs, Cm + CdA values
+4. **Input Parameters** - All simulation settings
+5. **Convergence** - Full iteration history (if available)
+
+### Roadmap Status After This Session
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | ✅ Complete | Critical Bug Fixes |
+| Phase 2 | ✅ Complete | Results Display |
+| Phase 3 | ✅ Complete | Visualization |
+| Phase 4 | ✅ Complete | Organization & Comparison |
+| Phase 5 | ✅ Complete | Export & Polish |
+
+### Testing
+- JavaScript syntax verified: `node --check static/js/dashboard.js` ✅
+- CDN libraries accessible ✅
+- Dashboard page serves correctly at `/dashboard?job=<id>` ✅
+
+### To Test Exports
+1. Start server: `uvicorn backend.app:app --host 0.0.0.0 --port 8000`
+2. Visit: `http://localhost:8000/dashboard?job=8df94ff9`
+3. Click "EXPORT" button in footer
+4. Select PDF, Excel, CSV, or Chart Image
+
+### Remaining Enhancements (Optional)
+- Image export for 3D pressure viewer
+- Batch comparison export
+- Share functionality with unique URLs
+
+---
+
+## Session: 2026-01-25 - Phase 1 Bug Fixes & Testing
+
+### What Was Done
+
+**1. Navigation Verification**
+- Ran existing Playwright tests - navigation works correctly
+- BUG-001 from `planning/BUGS_AND_UX_ISSUES.md` was already fixed
+- Added 5 new edge case tests for navigation robustness
+
+**2. Error Handling Improvements** (`static/js/app.js`)
+
+File Upload:
+- Added `MAX_FILE_SIZE` constant (100MB limit)
+- File size validation before upload
+- Empty file validation
+- Specific HTTP error code handling (413, 415, 422, 500+)
+- Network error detection (`TypeError` for fetch failures)
+- Loading state during upload (`.uploading` class)
+- Server warning support
+- Auto-clear upload on error
+
+Simulation Submission:
+- Specific HTTP error messages (400, 404, 503, 500+)
+- Loading state with spinner during submission
+- Button text changes to "Starting..."
+- Network error handling
+- Button re-enable after completion (success or failure)
+
+Global Error Handlers:
+- `window.onerror` - catches uncaught JS errors
+- `unhandledrejection` - catches unhandled promise rejections
+
+**3. CSS Additions** (`static/css/style.css`)
+- `.toast.warning` - yellow warning toast style
+- `.upload-zone.uploading` - grayed out with "Uploading..." overlay
+- `.btn-primary .spinner` - spinning loader for buttons
+- `.form-group.has-error` - red border for invalid inputs
+- `.form-group .error-message` - error text display
+
+**4. Tests Added** (`tests/test_ui_playwright.py`)
+
+| Class | Tests Added | Total |
+|-------|-------------|-------|
+| TestNavigation | +5 new | 8 |
+| TestErrorHandling | +5 new | 5 |
+| TestCompareView | +3 new | 3 |
+| TestProjectsView | +5 new | 5 |
+
+New navigation tests:
+- `test_navigate_to_compare`
+- `test_navigate_to_projects`
+- `test_only_one_view_active_at_a_time`
+- `test_only_one_nav_button_active_at_a_time`
+- `test_rapid_navigation_switching`
+
+### Test Results
+```
+47 Playwright UI tests - PASSED
+30 STL validator tests - PASSED
+77 total tests - ALL PASSED
+```
+
+### Files Modified
+```
+static/js/app.js              ~80 lines changed (error handling)
+static/css/style.css          +45 lines (new styles)
+tests/test_ui_playwright.py   +120 lines (18 new tests)
+```
+
+### Next Steps (Phase 2)
+1. **US-001: Results Dashboard** - Display simulation results with metrics
+2. **US-002: Simulation List** - Enhanced job list with sorting/filtering
+
+See `planning/user_stories/US001_RESULTS_DASHBOARD.md` for acceptance criteria.
+
+### Quick Resume Commands
+```bash
+# Start server
+cd /home/constantine/repo/openFOAM/wheelflow
+source venv/bin/activate
+uvicorn backend.app:app --host 0.0.0.0 --port 8000
+
+# Run all tests
+pytest tests/ -v
+
+# Run UI tests only
+pytest tests/test_ui_playwright.py -v
+```

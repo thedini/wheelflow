@@ -210,3 +210,198 @@ def extract_yaw_series(case_dirs: List[Path], yaw_angles: List[float]) -> Dict:
             result["Cs"].append(None)
 
     return result
+
+
+# Known wheel part names for automatic detection
+KNOWN_WHEEL_PARTS = [
+    'rim', 'wheel_rim',
+    'tire', 'wheel_tire',
+    'spokes', 'wheel_spokes',
+    'hub', 'wheel_hub',
+    'disc', 'wheel_disc'
+]
+
+
+def detect_wheel_parts(case_dir: Path) -> List[str]:
+    """
+    Parse boundary file to find wheel sub-patches.
+
+    Looks for patches matching known wheel component names.
+
+    Args:
+        case_dir: OpenFOAM case directory
+
+    Returns:
+        List of detected part patch names
+    """
+    boundary_file = case_dir / "constant" / "polyMesh" / "boundary"
+
+    if not boundary_file.exists():
+        return []
+
+    detected_parts = []
+
+    try:
+        with open(boundary_file, 'r') as f:
+            content = f.read()
+
+        # Find all patch names in the boundary file
+        # Format: patchName { type ...; nFaces ...; startFace ...; }
+        patch_pattern = r'^\s*(\w+)\s*\n\s*\{'
+        matches = re.findall(patch_pattern, content, re.MULTILINE)
+
+        for patch_name in matches:
+            patch_lower = patch_name.lower()
+            # Check if it matches any known wheel part name
+            for known_part in KNOWN_WHEEL_PARTS:
+                if known_part in patch_lower or patch_lower == known_part:
+                    detected_parts.append(patch_name)
+                    break
+
+    except Exception as e:
+        print(f"Error detecting wheel parts: {e}")
+
+    return detected_parts
+
+
+def extract_per_part_forces(case_dir: Path) -> Dict:
+    """
+    Extract forces for each wheel part from separate forceCoeffs directories.
+
+    Looks for postProcessing/forceCoeffs_<partname>/ directories.
+
+    Args:
+        case_dir: OpenFOAM case directory
+
+    Returns:
+        dict with:
+        - parts: list of {name, Cd, Cl, Cm, drag_N, drag_percent}
+        - total_drag_N: sum of all part drags
+        - has_parts: bool indicating if per-part data was found
+    """
+    post_dir = case_dir / "postProcessing"
+    result = {
+        "parts": [],
+        "total_drag_N": 0,
+        "has_parts": False
+    }
+
+    if not post_dir.exists():
+        return result
+
+    # Find all forceCoeffs_* directories
+    force_dirs = list(post_dir.glob("forceCoeffs_*"))
+
+    if not force_dirs:
+        return result
+
+    parts_data = []
+    total_cd = 0
+
+    for force_dir in force_dirs:
+        # Extract part name from directory (forceCoeffs_rim -> rim)
+        part_name = force_dir.name.replace("forceCoeffs_", "")
+
+        # Find the data file
+        data_file = force_dir / "0" / "forceCoeffs.dat"
+        if not data_file.exists():
+            # Try latest time directory
+            time_dirs = sorted([d for d in force_dir.iterdir() if d.is_dir()])
+            if time_dirs:
+                data_file = time_dirs[-1] / "forceCoeffs.dat"
+
+        if not data_file.exists():
+            continue
+
+        # Parse the data file
+        try:
+            with open(data_file, 'r') as f:
+                lines = f.readlines()
+
+            # Get last non-comment line
+            for line in reversed(lines):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        Cm = float(parts[1])
+                        Cd = float(parts[2])
+                        Cl = float(parts[3])
+
+                        parts_data.append({
+                            "name": part_name,
+                            "Cd": Cd,
+                            "Cl": Cl,
+                            "Cm": Cm
+                        })
+                        total_cd += abs(Cd)
+                        break
+
+        except Exception as e:
+            print(f"Error parsing {data_file}: {e}")
+
+    # Calculate percentages
+    if parts_data and total_cd > 0:
+        for part in parts_data:
+            part["drag_percent"] = (abs(part["Cd"]) / total_cd) * 100
+
+        result["parts"] = parts_data
+        result["total_Cd"] = total_cd
+        result["has_parts"] = True
+
+    return result
+
+
+def generate_per_part_force_coeffs(parts: List[str], config: Dict) -> str:
+    """
+    Generate forceCoeffs function entries for each wheel part.
+
+    Args:
+        parts: List of patch names (e.g., ['rim', 'tire', 'spokes'])
+        config: Simulation config with speed, air properties, etc.
+
+    Returns:
+        String with forceCoeffs entries to add to controlDict functions
+    """
+    if not parts:
+        return ""
+
+    air = config.get("air", {"rho": 1.225})
+    speed = config.get("speed", 13.9)
+    wheel_radius = config.get("wheel_radius", 0.325)
+    aref = config.get("aref", 0.0225)
+    yaw = config.get("yaw_angles", [0])[0] if config.get("yaw_angles") else 0
+
+    # Calculate drag direction from yaw
+    import math
+    yaw_rad = math.radians(yaw)
+    drag_x = math.cos(yaw_rad)
+    drag_y = math.sin(yaw_rad)
+
+    entries = []
+
+    for part in parts:
+        entry = f"""
+    forceCoeffs_{part}
+    {{
+        type            forceCoeffs;
+        libs            ("libforces.so");
+        writeControl    timeStep;
+        writeInterval   1;
+
+        patches         ({part});
+        rho             rhoInf;
+        rhoInf          {air['rho']};
+
+        CofR            (0 0 0);
+        liftDir         (0 0 1);
+        dragDir         ({drag_x:.6f} {drag_y:.6f} 0);
+        pitchAxis       (0 1 0);
+
+        magUInf         {speed};
+        lRef            {wheel_radius * 2};
+        Aref            {aref};
+    }}"""
+        entries.append(entry)
+
+    return "\n".join(entries)

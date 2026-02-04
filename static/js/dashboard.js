@@ -20,6 +20,7 @@ function initDashboard(jobId) {
     // Always initialize UI components first
     initConvergenceChart();
     initPolarChart();
+    initPartsBreakdownChart();
     init3DViewer();
     initViewButtons();
     initSpeedometer();
@@ -374,6 +375,12 @@ function updateJobStatus(job) {
     // Try to load pressure surface when simulation advances
     if (job.status === 'post-processing' || job.status === 'complete') {
         loadPressureSurface(currentJobId);
+        loadPartsBreakdown(currentJobId);
+    }
+
+    // Load hero image when simulation completes
+    if (job.status === 'complete') {
+        loadHeroImage(currentJobId);
     }
 }
 
@@ -699,48 +706,698 @@ function formatNumber(num, decimals = 1) {
     return num.toFixed(decimals);
 }
 
-// Export functions
-function exportPDF() {
-    alert('PDF export coming soon!');
-    // TODO: Implement PDF generation
+// Export Dropdown Toggle
+function toggleExportMenu() {
+    const dropdown = document.querySelector('.export-dropdown');
+    dropdown.classList.toggle('open');
 }
 
+// Close export menu when clicking outside
+document.addEventListener('click', (e) => {
+    const dropdown = document.querySelector('.export-dropdown');
+    if (dropdown && !dropdown.contains(e.target)) {
+        dropdown.classList.remove('open');
+    }
+});
+
+// PDF Report Generation
+async function exportPDF() {
+    if (!currentJobId) {
+        alert('No simulation data available');
+        return;
+    }
+
+    const dropdown = document.querySelector('.export-dropdown');
+    dropdown.classList.remove('open');
+
+    const btn = document.querySelector('.export-btn-main');
+    btn.classList.add('loading');
+
+    try {
+        const response = await fetch(`/api/jobs/${currentJobId}`);
+        const job = await response.json();
+
+        // Initialize jsPDF
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 15;
+
+        // Colors matching WheelFlow dark theme
+        const colors = {
+            primary: [0, 144, 255],      // Accent blue
+            secondary: [139, 152, 165],  // Text secondary
+            dark: [15, 20, 25],          // Background
+            text: [255, 255, 255],       // White text
+            success: [0, 210, 106],      // Green
+            warning: [255, 215, 0]       // Yellow
+        };
+
+        // === PAGE 1: COVER ===
+        // Dark background
+        doc.setFillColor(...colors.dark);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+        // Header accent bar
+        doc.setFillColor(...colors.primary);
+        doc.rect(0, 0, pageWidth, 3, 'F');
+
+        // WheelFlow Logo Area
+        doc.setFillColor(30, 35, 40);
+        doc.roundedRect(margin, 30, pageWidth - 2*margin, 50, 3, 3, 'F');
+
+        // Logo icon (wheel)
+        doc.setDrawColor(...colors.primary);
+        doc.setLineWidth(1.5);
+        doc.circle(pageWidth/2, 55, 12);
+        doc.circle(pageWidth/2, 55, 5);
+        doc.line(pageWidth/2, 43, pageWidth/2, 49);
+        doc.line(pageWidth/2, 61, pageWidth/2, 67);
+
+        // Title
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(28);
+        doc.setFont('helvetica', 'bold');
+        doc.text('WHEELFLOW', pageWidth/2, 95, { align: 'center' });
+
+        doc.setFontSize(12);
+        doc.setTextColor(...colors.secondary);
+        doc.text('CFD SIMULATION REPORT', pageWidth/2, 105, { align: 'center' });
+
+        // Simulation Name Card
+        doc.setFillColor(25, 30, 35);
+        doc.roundedRect(margin, 120, pageWidth - 2*margin, 45, 3, 3, 'F');
+
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.text('SIMULATION', margin + 10, 133);
+
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(20);
+        doc.setFont('helvetica', 'bold');
+        doc.text(job.name || 'Unnamed Simulation', margin + 10, 148);
+
+        doc.setTextColor(...colors.secondary);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        const dateStr = new Date().toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric'
+        });
+        doc.text(`Generated: ${dateStr}`, margin + 10, 158);
+
+        // Key Result Preview
+        const results = job.results || {};
+        const CdA = results.CdA ? (results.CdA * 10000).toFixed(1) : (results.CdA_cm2 || '--');
+
+        doc.setFillColor(25, 30, 35);
+        doc.roundedRect(margin, 175, pageWidth - 2*margin, 50, 3, 3, 'F');
+
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.text('PRIMARY RESULT', margin + 10, 188);
+
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(36);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${CdA}`, margin + 10, 212);
+
+        doc.setFontSize(14);
+        doc.setTextColor(...colors.secondary);
+        doc.text('cm²  CdA', margin + 55, 212);
+
+        // Quality Badge
+        const quality = (job.config?.quality || 'standard').toUpperCase();
+        doc.setFillColor(...colors.primary);
+        doc.roundedRect(pageWidth - margin - 45, 195, 35, 18, 2, 2, 'F');
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(quality, pageWidth - margin - 27.5, 206, { align: 'center' });
+
+        // Footer
+        doc.setTextColor(...colors.secondary);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Powered by OpenFOAM | Local CFD Analysis', pageWidth/2, pageHeight - 15, { align: 'center' });
+
+        // === PAGE 2: RESULTS SUMMARY ===
+        doc.addPage();
+
+        // Header
+        doc.setFillColor(...colors.dark);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
+        doc.setFillColor(...colors.primary);
+        doc.rect(0, 0, pageWidth, 3, 'F');
+
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('RESULTS SUMMARY', margin, 20);
+
+        // Simulation Parameters Section
+        doc.setFillColor(25, 30, 35);
+        doc.roundedRect(margin, 28, pageWidth - 2*margin, 55, 3, 3, 'F');
+
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.text('INPUT PARAMETERS', margin + 8, 40);
+
+        const config = job.config || {};
+        const params = [
+            ['Speed', `${config.speed || 13.9} m/s (${Math.round((config.speed || 13.9) * 3.6)} km/h)`],
+            ['Yaw Angle', `${config.yaw_angles?.[0] || 0}°`],
+            ['Mesh Quality', (config.quality || 'standard').toUpperCase()],
+            ['Ground', config.ground_enabled !== false ? `${config.ground_type || 'moving'} belt` : 'Disabled'],
+            ['Wheel Rotation', config.rolling_enabled ? 'Enabled (MRF)' : 'Disabled'],
+            ['Wheel Radius', `${config.wheel_radius || 0.325} m`]
+        ];
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        let yPos = 50;
+        params.forEach(([label, value], i) => {
+            const col = i < 3 ? 0 : 1;
+            const row = i % 3;
+            const xBase = margin + 8 + col * 85;
+            const y = 50 + row * 10;
+
+            doc.setTextColor(...colors.secondary);
+            doc.text(label + ':', xBase, y);
+            doc.setTextColor(...colors.text);
+            doc.text(value, xBase + 40, y);
+        });
+
+        // Key Metrics Table
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('KEY METRICS', margin + 8, 95);
+
+        const coefficients = results.coefficients || {};
+        const forces = results.forces || {};
+
+        // Calculate forces if not provided
+        const rho = 1.225;
+        const U = config.speed || 13.9;
+        const Aref = config.aref || results.aref || 0.0225;
+        const q = 0.5 * rho * U * U;
+
+        const Cd = coefficients.Cd || 0;
+        const Cl = coefficients.Cl || 0;
+        const Cm = coefficients.Cm || 0;
+        const dragN = forces.drag_N || (Cd * q * Aref);
+        const liftN = forces.lift_N || (Cl * q * Aref);
+        const CdAval = results.CdA ? results.CdA * 10000 : (Cd * Aref * 10000);
+
+        // Metrics table using autoTable
+        doc.autoTable({
+            startY: 100,
+            head: [['Metric', 'Value', 'Unit', 'Description']],
+            body: [
+                ['Drag Force (Fd)', dragN.toFixed(3), 'N', 'Aerodynamic drag'],
+                ['Lift Force (Fl)', liftN.toFixed(3), 'N', 'Vertical force'],
+                ['Drag Coefficient (Cd)', Cd.toFixed(4), '-', 'Dimensionless drag'],
+                ['Lift Coefficient (Cl)', Cl.toFixed(4), '-', 'Dimensionless lift'],
+                ['Moment Coefficient (Cm)', Cm.toFixed(4), '-', 'Pitching moment'],
+                ['CdA (Drag Area)', CdAval.toFixed(1), 'cm²', 'Cd × Reference Area'],
+            ],
+            theme: 'plain',
+            styles: {
+                fillColor: [25, 30, 35],
+                textColor: [255, 255, 255],
+                fontSize: 9,
+                cellPadding: 4
+            },
+            headStyles: {
+                fillColor: [0, 144, 255],
+                textColor: [255, 255, 255],
+                fontStyle: 'bold',
+                fontSize: 9
+            },
+            alternateRowStyles: {
+                fillColor: [30, 35, 40]
+            },
+            margin: { left: margin, right: margin }
+        });
+
+        // Comparison with Reference (if available)
+        if (results.aerocloud_comparison) {
+            const comp = results.aerocloud_comparison;
+            const lastY = doc.lastAutoTable.finalY + 15;
+
+            doc.setTextColor(...colors.primary);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('REFERENCE COMPARISON', margin + 8, lastY);
+
+            doc.autoTable({
+                startY: lastY + 5,
+                head: [['Metric', 'Current', 'AeroCloud Ref', 'Difference']],
+                body: [
+                    ['Drag (N)', dragN.toFixed(2), '1.31', `${((dragN - 1.31) / 1.31 * 100).toFixed(1)}%`],
+                    ['Cd', Cd.toFixed(4), '0.490', `${((Cd - 0.490) / 0.490 * 100).toFixed(1)}%`],
+                    ['CdA (cm²)', CdAval.toFixed(1), '110', `${((CdAval - 110) / 110 * 100).toFixed(1)}%`],
+                ],
+                theme: 'plain',
+                styles: {
+                    fillColor: [25, 30, 35],
+                    textColor: [255, 255, 255],
+                    fontSize: 9,
+                    cellPadding: 4
+                },
+                headStyles: {
+                    fillColor: [100, 100, 110],
+                    textColor: [255, 255, 255],
+                    fontStyle: 'bold'
+                },
+                margin: { left: margin, right: margin }
+            });
+
+            doc.setTextColor(...colors.secondary);
+            doc.setFontSize(8);
+            doc.text('* Reference: AeroCloud TTTR28_22_TSV3 at 15° yaw', margin + 8, doc.lastAutoTable.finalY + 8);
+        }
+
+        // === PAGE 3: CONVERGENCE CHART ===
+        doc.addPage();
+
+        doc.setFillColor(...colors.dark);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
+        doc.setFillColor(...colors.primary);
+        doc.rect(0, 0, pageWidth, 3, 'F');
+
+        doc.setTextColor(...colors.text);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('CONVERGENCE ANALYSIS', margin, 20);
+
+        // Capture convergence chart as image
+        const chartCanvas = document.getElementById('convergence-chart');
+        if (chartCanvas && convergenceChart) {
+            try {
+                const chartImage = chartCanvas.toDataURL('image/png', 1.0);
+                doc.addImage(chartImage, 'PNG', margin, 30, pageWidth - 2*margin, 80);
+            } catch (e) {
+                doc.setTextColor(...colors.secondary);
+                doc.setFontSize(10);
+                doc.text('Chart image could not be captured', pageWidth/2, 70, { align: 'center' });
+            }
+        }
+
+        // Convergence statistics
+        doc.setFillColor(25, 30, 35);
+        doc.roundedRect(margin, 120, pageWidth - 2*margin, 40, 3, 3, 'F');
+
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('CONVERGENCE STATISTICS', margin + 8, 132);
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        const iterations = document.getElementById('iterations')?.textContent || '0';
+        const residual = document.getElementById('residual-value')?.textContent || '--';
+
+        doc.setTextColor(...colors.secondary);
+        doc.text('Total Iterations:', margin + 8, 145);
+        doc.text('Final Residual:', margin + 8, 155);
+
+        doc.setTextColor(...colors.text);
+        doc.text(iterations, margin + 50, 145);
+        doc.text(residual, margin + 50, 155);
+
+        doc.setTextColor(...colors.secondary);
+        doc.text('Convergence Status:', margin + 100, 145);
+        doc.setTextColor(...colors.success);
+        doc.text(results.converged !== false ? 'CONVERGED' : 'NOT CONVERGED', margin + 145, 145);
+
+        // Methodology section
+        doc.setFillColor(25, 30, 35);
+        doc.roundedRect(margin, 170, pageWidth - 2*margin, 70, 3, 3, 'F');
+
+        doc.setTextColor(...colors.primary);
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('METHODOLOGY', margin + 8, 182);
+
+        const methodology = [
+            ['CFD Solver', 'OpenFOAM simpleFoam (SIMPLE algorithm)'],
+            ['Turbulence Model', 'k-omega SST'],
+            ['Reference Area', `${Aref} m² (AeroCloud standard)`],
+            ['Air Density', `${rho} kg/m³`],
+            ['Dynamic Pressure', `${q.toFixed(2)} Pa`],
+            ['Reynolds Number', config.reynolds ? config.reynolds.toLocaleString() : 'N/A']
+        ];
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        methodology.forEach(([label, value], i) => {
+            const y = 195 + i * 10;
+            doc.setTextColor(...colors.secondary);
+            doc.text(label + ':', margin + 8, y);
+            doc.setTextColor(...colors.text);
+            doc.text(value, margin + 55, y);
+        });
+
+        // Footer on each page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+            doc.setPage(i);
+            doc.setFillColor(...colors.dark);
+            doc.setTextColor(...colors.secondary);
+            doc.setFontSize(8);
+            doc.text(
+                `WheelFlow Report | ${job.name || 'Simulation'} | Page ${i} of ${totalPages}`,
+                pageWidth / 2,
+                pageHeight - 8,
+                { align: 'center' }
+            );
+        }
+
+        // Save PDF
+        const filename = `WheelFlow_${(job.name || 'simulation').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.pdf`;
+        doc.save(filename);
+
+        console.log('PDF exported:', filename);
+
+    } catch (error) {
+        console.error('PDF export error:', error);
+        alert('Failed to generate PDF: ' + error.message);
+    } finally {
+        btn.classList.remove('loading');
+    }
+}
+
+// Excel Export with Multiple Sheets
+async function exportExcel() {
+    if (!currentJobId) {
+        alert('No simulation data available');
+        return;
+    }
+
+    const dropdown = document.querySelector('.export-dropdown');
+    dropdown.classList.remove('open');
+
+    const btn = document.querySelector('.export-btn-main');
+    btn.classList.add('loading');
+
+    try {
+        const response = await fetch(`/api/jobs/${currentJobId}`);
+        const job = await response.json();
+
+        const results = job.results || {};
+        const config = job.config || {};
+        const coefficients = results.coefficients || {};
+        const forces = results.forces || {};
+
+        // Calculate derived values
+        const rho = 1.225;
+        const U = config.speed || 13.9;
+        const Aref = config.aref || results.aref || 0.0225;
+        const q = 0.5 * rho * U * U;
+
+        const Cd = coefficients.Cd || 0;
+        const Cl = coefficients.Cl || 0;
+        const Cm = coefficients.Cm || 0;
+        const dragN = forces.drag_N || (Cd * q * Aref);
+        const liftN = forces.lift_N || (Cl * q * Aref);
+        const CdAval = results.CdA ? results.CdA * 10000 : (Cd * Aref * 10000);
+
+        // Create workbook
+        const wb = XLSX.utils.book_new();
+
+        // Sheet 1: Summary
+        const summaryData = [
+            ['WheelFlow CFD Simulation Report'],
+            [''],
+            ['Simulation Information'],
+            ['Name', job.name || 'Unnamed'],
+            ['Job ID', currentJobId],
+            ['Status', job.status || 'Unknown'],
+            ['Date', new Date().toISOString()],
+            [''],
+            ['Key Results'],
+            ['CdA (cm²)', CdAval.toFixed(1)],
+            ['Drag Force (N)', dragN.toFixed(3)],
+            ['Lift Force (N)', liftN.toFixed(3)],
+            ['Cd', Cd.toFixed(4)],
+            ['Cl', Cl.toFixed(4)],
+            ['Cm', Cm.toFixed(4)],
+        ];
+        const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+
+        // Set column widths
+        wsSummary['!cols'] = [{ wch: 25 }, { wch: 30 }];
+
+        XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+        // Sheet 2: Forces
+        const forcesData = [
+            ['Force Analysis'],
+            [''],
+            ['Parameter', 'Value', 'Unit', 'Description'],
+            ['Drag Force (Fd)', dragN.toFixed(4), 'N', 'Force in flow direction'],
+            ['Lift Force (Fl)', liftN.toFixed(4), 'N', 'Force perpendicular to flow'],
+            ['Side Force (Fs)', (forces.side_N || 0).toFixed(4), 'N', 'Lateral force'],
+            [''],
+            ['Moment Analysis'],
+            ['Roll Moment', (coefficients.Mx || 0).toFixed(4), 'N·m', 'About X-axis'],
+            ['Pitch Moment', (coefficients.My || 0).toFixed(4), 'N·m', 'About Y-axis'],
+            ['Yaw Moment', (coefficients.Mz || 0).toFixed(4), 'N·m', 'About Z-axis'],
+        ];
+        const wsForces = XLSX.utils.aoa_to_sheet(forcesData);
+        wsForces['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 10 }, { wch: 30 }];
+        XLSX.utils.book_append_sheet(wb, wsForces, 'Forces');
+
+        // Sheet 3: Coefficients
+        const coeffData = [
+            ['Aerodynamic Coefficients'],
+            [''],
+            ['Coefficient', 'Value', 'Definition'],
+            ['Cd (Drag)', Cd.toFixed(6), 'Fd / (q × Aref)'],
+            ['Cl (Lift)', Cl.toFixed(6), 'Fl / (q × Aref)'],
+            ['Cs (Side)', (coefficients.Cs || 0).toFixed(6), 'Fs / (q × Aref)'],
+            ['Cm (Moment)', Cm.toFixed(6), 'M / (q × Aref × L)'],
+            [''],
+            ['Coefficient × Area'],
+            ['CdA', (Cd * Aref * 10000).toFixed(2), 'cm²'],
+            ['ClA', (Cl * Aref * 10000).toFixed(2), 'cm²'],
+            ['CsA', ((coefficients.Cs || 0) * Aref * 10000).toFixed(2), 'cm²'],
+            [''],
+            ['Reference Values'],
+            ['Reference Area (Aref)', Aref, 'm²'],
+            ['Dynamic Pressure (q)', q.toFixed(2), 'Pa'],
+        ];
+        const wsCoeff = XLSX.utils.aoa_to_sheet(coeffData);
+        wsCoeff['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 20 }];
+        XLSX.utils.book_append_sheet(wb, wsCoeff, 'Coefficients');
+
+        // Sheet 4: Input Parameters
+        const inputData = [
+            ['Simulation Input Parameters'],
+            [''],
+            ['Flow Conditions'],
+            ['Flow Speed', config.speed || 13.9, 'm/s'],
+            ['Speed (km/h)', Math.round((config.speed || 13.9) * 3.6), 'km/h'],
+            ['Yaw Angle', config.yaw_angles?.[0] || 0, '°'],
+            ['Air Density (ρ)', rho, 'kg/m³'],
+            ['Kinematic Viscosity (ν)', 1.48e-5, 'm²/s'],
+            ['Reynolds Number', config.reynolds || 'N/A', '-'],
+            [''],
+            ['Geometry Settings'],
+            ['Wheel Radius', config.wheel_radius || 0.325, 'm'],
+            ['Ground Simulation', config.ground_enabled !== false ? 'Enabled' : 'Disabled', ''],
+            ['Ground Type', config.ground_type || 'moving', ''],
+            ['Wheel Rotation', config.rolling_enabled ? 'Enabled' : 'Disabled', ''],
+            ['Rotation Method', config.rotation_method || 'none', ''],
+            ['Angular Velocity (ω)', config.omega || 'N/A', 'rad/s'],
+            [''],
+            ['Mesh Settings'],
+            ['Quality Level', config.quality || 'standard', ''],
+            ['Estimated Cells', config.quality === 'pro' ? '~8M' : config.quality === 'basic' ? '~500K' : '~2M', ''],
+        ];
+        const wsInput = XLSX.utils.aoa_to_sheet(inputData);
+        wsInput['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 10 }];
+        XLSX.utils.book_append_sheet(wb, wsInput, 'Input Parameters');
+
+        // Try to get convergence data for additional sheet
+        try {
+            const convResponse = await fetch(`/api/jobs/${currentJobId}/convergence`);
+            if (convResponse.ok) {
+                const convData = await convResponse.json();
+                if (convData.time && convData.time.length > 0) {
+                    const convergenceRows = [
+                        ['Convergence History'],
+                        [''],
+                        ['Iteration', 'Cd', 'Cl', 'Cm']
+                    ];
+
+                    // Sample every N points to keep file size reasonable
+                    const step = Math.max(1, Math.floor(convData.time.length / 500));
+                    for (let i = 0; i < convData.time.length; i += step) {
+                        convergenceRows.push([
+                            convData.time[i],
+                            convData.Cd?.[i]?.toFixed(6) || '',
+                            convData.Cl?.[i]?.toFixed(6) || '',
+                            convData.Cm?.[i]?.toFixed(6) || ''
+                        ]);
+                    }
+
+                    const wsConv = XLSX.utils.aoa_to_sheet(convergenceRows);
+                    wsConv['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+                    XLSX.utils.book_append_sheet(wb, wsConv, 'Convergence');
+                }
+            }
+        } catch (e) {
+            console.log('Could not fetch convergence data for Excel:', e);
+        }
+
+        // Generate filename and save
+        const filename = `WheelFlow_${(job.name || 'simulation').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx`;
+        XLSX.writeFile(wb, filename);
+
+        console.log('Excel exported:', filename);
+
+    } catch (error) {
+        console.error('Excel export error:', error);
+        alert('Failed to generate Excel file: ' + error.message);
+    } finally {
+        btn.classList.remove('loading');
+    }
+}
+
+// CSV Export (enhanced)
 function exportCSV() {
-    if (!currentJobId) return;
+    if (!currentJobId) {
+        alert('No simulation data available');
+        return;
+    }
+
+    const dropdown = document.querySelector('.export-dropdown');
+    if (dropdown) dropdown.classList.remove('open');
 
     fetch(`/api/jobs/${currentJobId}`)
         .then(res => res.json())
         .then(job => {
             const results = job.results || {};
             const coefficients = results.coefficients || {};
+            const config = job.config || {};
+
+            // Calculate derived values
+            const rho = 1.225;
+            const U = config.speed || 13.9;
+            const Aref = config.aref || results.aref || 0.0225;
+            const q = 0.5 * rho * U * U;
+
+            const Cd = coefficients.Cd || 0;
+            const Cl = coefficients.Cl || 0;
+            const Cm = coefficients.Cm || 0;
+            const dragN = results.forces?.drag_N || (Cd * q * Aref);
+            const liftN = results.forces?.lift_N || (Cl * q * Aref);
+            const CdA = results.CdA ? (results.CdA * 10000).toFixed(2) : (Cd * Aref * 10000).toFixed(2);
 
             const csvContent = [
-                'WheelFlow CFD Results',
-                `Job ID,${currentJobId}`,
-                `Name,${job.name}`,
-                `Speed,${job.config?.speed} m/s`,
-                `Yaw Angle,${job.config?.yaw_angles?.[0]}°`,
-                `Quality,${job.config?.quality}`,
+                '# WheelFlow CFD Results',
+                '# Generated: ' + new Date().toISOString(),
                 '',
-                'Coefficients',
-                `Cd,${coefficients.Cd || ''}`,
-                `Cl,${coefficients.Cl || ''}`,
-                `Cm,${coefficients.Cm || ''}`,
+                'Section,Parameter,Value,Unit',
+                'Info,Job ID,' + currentJobId + ',',
+                'Info,Name,' + (job.name || '') + ',',
+                'Info,Status,' + (job.status || '') + ',',
                 '',
-                'Forces (Aref=0.0225 m²)',
-                `Drag,${results.forces?.drag_N || ''} N`,
-                `Lift,${results.forces?.lift_N || ''} N`,
-                `CdA,${results.CdA ? (results.CdA * 10000).toFixed(1) : ''} cm²`
+                'Config,Speed,' + (config.speed || 13.9) + ',m/s',
+                'Config,Speed,' + Math.round((config.speed || 13.9) * 3.6) + ',km/h',
+                'Config,Yaw Angle,' + (config.yaw_angles?.[0] || 0) + ',deg',
+                'Config,Quality,' + (config.quality || 'standard') + ',',
+                'Config,Ground,' + (config.ground_enabled !== false ? 'enabled' : 'disabled') + ',',
+                'Config,Wheel Radius,' + (config.wheel_radius || 0.325) + ',m',
+                '',
+                'Results,Drag Force,' + dragN.toFixed(4) + ',N',
+                'Results,Lift Force,' + liftN.toFixed(4) + ',N',
+                'Results,Cd,' + Cd.toFixed(6) + ',',
+                'Results,Cl,' + Cl.toFixed(6) + ',',
+                'Results,Cm,' + Cm.toFixed(6) + ',',
+                'Results,CdA,' + CdA + ',cm²',
+                '',
+                'Reference,Aref,' + Aref + ',m²',
+                'Reference,Dynamic Pressure,' + q.toFixed(2) + ',Pa',
+                'Reference,Air Density,' + rho + ',kg/m³'
             ].join('\n');
 
             const blob = new Blob([csvContent], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `wheelflow_${currentJobId}.csv`;
+            a.download = `WheelFlow_${(job.name || 'simulation').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,10)}.csv`;
             a.click();
             URL.revokeObjectURL(url);
+
+            console.log('CSV exported');
+        })
+        .catch(error => {
+            console.error('CSV export error:', error);
+            alert('Failed to export CSV: ' + error.message);
         });
+}
+
+// Chart Image Export
+function exportChartImage() {
+    const dropdown = document.querySelector('.export-dropdown');
+    if (dropdown) dropdown.classList.remove('open');
+
+    const chartCanvas = document.getElementById('convergence-chart');
+    if (!chartCanvas) {
+        alert('No chart available to export');
+        return;
+    }
+
+    try {
+        // Create a temporary canvas with white background
+        const tempCanvas = document.createElement('canvas');
+        const ctx = tempCanvas.getContext('2d');
+
+        // Make it higher resolution
+        const scale = 2;
+        tempCanvas.width = chartCanvas.width * scale;
+        tempCanvas.height = chartCanvas.height * scale;
+
+        // Fill with dark background (matching dashboard theme)
+        ctx.fillStyle = '#0f1419';
+        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+        // Draw chart
+        ctx.scale(scale, scale);
+        ctx.drawImage(chartCanvas, 0, 0);
+
+        // Add title
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText('WheelFlow - Convergence Chart', 10, 20);
+
+        // Add timestamp
+        ctx.fillStyle = '#8b98a5';
+        ctx.font = '10px Arial';
+        ctx.fillText(new Date().toLocaleString(), 10, chartCanvas.height - 10);
+
+        // Convert to PNG and download
+        const dataUrl = tempCanvas.toDataURL('image/png', 1.0);
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `WheelFlow_convergence_chart_${new Date().toISOString().slice(0,10)}.png`;
+        a.click();
+
+        console.log('Chart image exported');
+
+    } catch (error) {
+        console.error('Chart export error:', error);
+        alert('Failed to export chart image: ' + error.message);
+    }
 }
 
 // Chart button handlers
@@ -996,5 +1653,272 @@ async function loadPressureSurface(jobId) {
 
     } catch (error) {
         console.log('Could not load pressure surface:', error);
+    }
+}
+
+// Parts Breakdown Chart
+let partsBreakdownChart = null;
+
+/**
+ * Initialize the parts breakdown doughnut chart
+ */
+function initPartsBreakdownChart() {
+    const ctx = document.getElementById('parts-breakdown-chart');
+    if (!ctx) return;
+
+    partsBreakdownChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: [
+                    '#e10600',  // Red - rim
+                    '#0090ff',  // Blue - tire
+                    '#00d26a',  // Green - spokes
+                    '#ffd700',  // Yellow - hub
+                    '#9d4edd'   // Purple - disc
+                ],
+                borderColor: '#0a0a0f',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '60%',
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const dataset = context.dataset;
+                            const total = dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${percentage}% drag`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Load and display parts breakdown data
+ */
+async function loadPartsBreakdown(jobId) {
+    if (!jobId) return;
+
+    const container = document.getElementById('breakdown-container');
+    const placeholder = document.getElementById('breakdown-placeholder');
+    const legend = document.getElementById('breakdown-legend');
+
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/jobs/${jobId}/parts_breakdown`);
+
+        if (!response.ok) {
+            console.log('Parts breakdown not available');
+            return;
+        }
+
+        const data = await response.json();
+
+        if (!data.has_parts || !data.parts || data.parts.length === 0) {
+            // Show placeholder
+            if (placeholder) placeholder.classList.remove('hidden');
+            if (partsBreakdownChart) {
+                partsBreakdownChart.data.labels = [];
+                partsBreakdownChart.data.datasets[0].data = [];
+                partsBreakdownChart.update();
+            }
+            return;
+        }
+
+        // Hide placeholder
+        if (placeholder) placeholder.classList.add('hidden');
+
+        // Initialize chart if needed
+        if (!partsBreakdownChart) {
+            initPartsBreakdownChart();
+        }
+
+        // Update chart data
+        const labels = data.parts.map(p => capitalizeFirst(p.name));
+        const values = data.parts.map(p => Math.abs(p.Cd));
+
+        partsBreakdownChart.data.labels = labels;
+        partsBreakdownChart.data.datasets[0].data = values;
+        partsBreakdownChart.update();
+
+        // Update legend
+        if (legend) {
+            const colors = partsBreakdownChart.data.datasets[0].backgroundColor;
+            const total = values.reduce((a, b) => a + b, 0);
+
+            legend.innerHTML = data.parts.map((part, i) => {
+                const percent = total > 0 ? ((Math.abs(part.Cd) / total) * 100).toFixed(1) : 0;
+                return `
+                    <div class="breakdown-legend-item">
+                        <span class="breakdown-legend-color" style="background: ${colors[i % colors.length]}"></span>
+                        <span>${capitalizeFirst(part.name)}</span>
+                        <span class="breakdown-legend-value">${percent}%</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        console.log('Parts breakdown loaded:', data.parts.length, 'parts');
+
+    } catch (error) {
+        console.log('Could not load parts breakdown:', error);
+    }
+}
+
+/**
+ * Capitalize first letter of a string
+ */
+function capitalizeFirst(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+// Hero Image Functions
+let heroImageJobId = null;
+
+/**
+ * Show hero loading state
+ */
+function showHeroLoading() {
+    const loading = document.getElementById('hero-loading');
+    const image = document.getElementById('hero-image');
+    const error = document.getElementById('hero-error');
+    const placeholder = document.getElementById('hero-placeholder');
+
+    if (loading) loading.classList.remove('hidden');
+    if (image) image.classList.add('hidden');
+    if (error) error.classList.add('hidden');
+    if (placeholder) placeholder.classList.add('hidden');
+}
+
+/**
+ * Show hero image
+ */
+function showHeroImage() {
+    const loading = document.getElementById('hero-loading');
+    const image = document.getElementById('hero-image');
+    const error = document.getElementById('hero-error');
+    const placeholder = document.getElementById('hero-placeholder');
+
+    if (loading) loading.classList.add('hidden');
+    if (image) image.classList.remove('hidden');
+    if (error) error.classList.add('hidden');
+    if (placeholder) placeholder.classList.add('hidden');
+}
+
+/**
+ * Show hero error state
+ */
+function showHeroError(message) {
+    const loading = document.getElementById('hero-loading');
+    const image = document.getElementById('hero-image');
+    const error = document.getElementById('hero-error');
+    const placeholder = document.getElementById('hero-placeholder');
+    const errorMsg = document.getElementById('hero-error-msg');
+
+    if (loading) loading.classList.add('hidden');
+    if (image) image.classList.add('hidden');
+    if (error) error.classList.remove('hidden');
+    if (placeholder) placeholder.classList.add('hidden');
+    if (errorMsg) errorMsg.textContent = message || 'Generation failed';
+}
+
+/**
+ * Show hero placeholder state
+ */
+function showHeroPlaceholder() {
+    const loading = document.getElementById('hero-loading');
+    const image = document.getElementById('hero-image');
+    const error = document.getElementById('hero-error');
+    const placeholder = document.getElementById('hero-placeholder');
+
+    if (loading) loading.classList.add('hidden');
+    if (image) image.classList.add('hidden');
+    if (error) error.classList.add('hidden');
+    if (placeholder) placeholder.classList.remove('hidden');
+}
+
+/**
+ * Load and display the hero image
+ */
+async function loadHeroImage(jobId, regenerate = false) {
+    if (!jobId) return;
+
+    heroImageJobId = jobId;
+    showHeroLoading();
+
+    try {
+        const url = regenerate
+            ? `/api/jobs/${jobId}/viz/hero.png?regenerate=true`
+            : `/api/jobs/${jobId}/viz/hero.png`;
+
+        const response = await fetch(url);
+
+        if (response.ok) {
+            const blob = await response.blob();
+            const imageUrl = URL.createObjectURL(blob);
+            const heroImage = document.getElementById('hero-image');
+
+            if (heroImage) {
+                heroImage.src = imageUrl;
+                heroImage.onload = () => {
+                    showHeroImage();
+                    console.log('Hero image loaded successfully');
+                };
+                heroImage.onerror = () => {
+                    showHeroError('Image load failed');
+                };
+            }
+        } else if (response.status === 503) {
+            showHeroError('ParaView unavailable');
+        } else if (response.status === 504) {
+            showHeroError('Generation timeout');
+        } else if (response.status === 404) {
+            showHeroPlaceholder();
+        } else {
+            showHeroError(`Error ${response.status}`);
+        }
+    } catch (error) {
+        console.log('Could not load hero image:', error);
+        showHeroError('Network error');
+    }
+}
+
+/**
+ * Regenerate the hero image
+ */
+function regenerateHeroImage() {
+    if (heroImageJobId) {
+        loadHeroImage(heroImageJobId, true);
+    }
+}
+
+/**
+ * Download the hero image
+ */
+function downloadHeroImage() {
+    const heroImage = document.getElementById('hero-image');
+    if (heroImage && heroImage.src && !heroImage.classList.contains('hidden')) {
+        const link = document.createElement('a');
+        link.href = heroImage.src;
+        link.download = `wheelflow_${heroImageJobId || 'hero'}_flow.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 }

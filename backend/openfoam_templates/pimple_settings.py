@@ -137,23 +137,12 @@ PIMPLE
     }}
 
     // Convergence control (exit outer loop early if converged)
+    // OpenFOAM 13+ requires single values, not dictionaries
     residualControl
     {{
-        p
-        {{
-            tolerance   1e-4;
-            relTol      0;
-        }}
-        U
-        {{
-            tolerance   1e-4;
-            relTol      0;
-        }}
-        "(k|omega)"
-        {{
-            tolerance   1e-4;
-            relTol      0;
-        }}
+        p               1e-4;
+        U               1e-4;
+        "(k|omega)"     1e-4;
     }}
 }}
 

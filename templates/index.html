@@ -8,6 +8,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <!-- Chart.js for visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -28,6 +30,8 @@
                 <button class="nav-btn active" data-view="upload">Upload</button>
                 <button class="nav-btn" data-view="jobs">Simulations</button>
                 <button class="nav-btn" data-view="results">Results</button>
+                <button class="nav-btn" data-view="compare">Compare</button>
+                <button class="nav-btn" data-view="projects">Projects</button>
             </nav>
         </header>
 
@@ -109,6 +113,15 @@
                                             <span class="toggle-label">Wheel rotation enabled</span>
                                         </label>
                                     </div>
+                                </div>
+
+                                <div class="form-group" id="rotation-method-group">
+                                    <label for="rotation-method">Rotation Method</label>
+                                    <select id="rotation-method">
+                                        <option value="mrf" selected>MRF (Steady State)</option>
+                                        <option value="transient">AMI (Transient)</option>
+                                    </select>
+                                    <small class="form-hint">MRF: faster, steady-state. AMI: more accurate, transient solver.</small>
                                 </div>
 
                                 <div class="form-group">
@@ -245,6 +258,89 @@
                     </div>
                 </div>
             </section>
+
+            <!-- Compare View -->
+            <section id="compare-view" class="view">
+                <div class="compare-container">
+                    <div class="compare-header">
+                        <h2>Compare Simulations</h2>
+                        <div class="compare-actions">
+                            <button class="btn-secondary" id="clear-compare-btn" onclick="clearComparison()" disabled>
+                                Clear Selection
+                            </button>
+                        </div>
+                    </div>
+                    <div class="compare-layout">
+                        <!-- Left: Job Selection -->
+                        <div class="compare-selection">
+                            <div class="compare-filters">
+                                <input type="text" id="compare-search" placeholder="Search simulations..." oninput="filterCompareJobs(this.value)">
+                                <select id="compare-quality-filter" onchange="filterCompareJobs()">
+                                    <option value="">All qualities</option>
+                                    <option value="basic">Basic</option>
+                                    <option value="standard">Standard</option>
+                                    <option value="pro">Pro</option>
+                                </select>
+                                <select id="compare-yaw-filter" onchange="filterCompareJobs()">
+                                    <option value="">All yaw angles</option>
+                                </select>
+                            </div>
+                            <div class="compare-job-list" id="compare-job-list">
+                                <div class="compare-loading">Loading simulations...</div>
+                            </div>
+                        </div>
+                        <!-- Right: Comparison Table -->
+                        <div class="compare-results">
+                            <div class="compare-table-container" id="compare-table-container">
+                                <div class="empty-state">
+                                    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <rect x="3" y="3" width="7" height="7"/>
+                                        <rect x="14" y="3" width="7" height="7"/>
+                                        <rect x="14" y="14" width="7" height="7"/>
+                                        <rect x="3" y="14" width="7" height="7"/>
+                                    </svg>
+                                    <h3>Select simulations to compare</h3>
+                                    <p>Check 2 or more simulations from the list to compare their results.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Projects View -->
+            <section id="projects-view" class="view">
+                <div class="projects-container">
+                    <div class="projects-header">
+                        <div class="projects-breadcrumb" id="projects-breadcrumb">
+                            <span class="breadcrumb-item active">All Projects</span>
+                        </div>
+                        <button class="btn-primary" onclick="showCreateProjectModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            New Project
+                        </button>
+                    </div>
+                    <div id="projects-content" class="projects-content">
+                        <div class="empty-state" id="projects-empty">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            <h3>No projects yet</h3>
+                            <p>Create a project to organize your simulations.</p>
+                            <button class="btn-cta" onclick="showCreateProjectModal()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                                Create Project
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <!-- Footer -->
@@ -255,6 +351,61 @@
 
     <!-- Toast Notification -->
     <div id="toast" class="toast hidden"></div>
+
+    <!-- Project Modal -->
+    <div id="project-modal" class="modal hidden">
+        <div class="modal-backdrop" onclick="closeProjectModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="project-modal-title">New Project</h3>
+                <button class="btn-icon" onclick="closeProjectModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <form id="project-form" onsubmit="saveProject(event)">
+                <input type="hidden" id="project-id" value="">
+                <div class="form-group">
+                    <label for="project-name">Project Name</label>
+                    <input type="text" id="project-name" placeholder="e.g., 2024 Aero Season" required>
+                </div>
+                <div class="form-group">
+                    <label for="project-description">Description</label>
+                    <textarea id="project-description" placeholder="Optional description..." rows="3"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeProjectModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Project</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Assign to Project Modal -->
+    <div id="assign-modal" class="modal hidden">
+        <div class="modal-backdrop" onclick="closeAssignModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Assign to Project</h3>
+                <button class="btn-icon" onclick="closeAssignModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="assign-modal-content">
+                <div class="assign-project-list" id="assign-project-list">
+                    <!-- Project list populated dynamically -->
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" onclick="closeAssignModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/js/app.js"></script>
 </body>
