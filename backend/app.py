@@ -950,6 +950,30 @@ functions
                 normal          (1 0 0);
                 interpolate     true;
             }}
+            zSlice_ground
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0 0.01);
+                normal          (0 0 1);
+                interpolate     true;
+            }}
+            zSlice_hub
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0 0.35);
+                normal          (0 0 1);
+                interpolate     true;
+            }}
+            zSlice_top
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0 0.68);
+                normal          (0 0 1);
+                interpolate     true;
+            }}
         }}
     }}
 }}
@@ -2416,23 +2440,38 @@ async def get_available_slices(job_id: str):
         if len(parts) >= 2:
             func_name = parts[0]
             time_str = parts[1]
-            # Parse slice type from function name
+            # Parse slice type from function name or file name
             slice_type = "unknown"
-            if "normal=(010)" in func_name or "normal=(0 1 0)" in func_name:
-                slice_type = "y-slice"
-                if "-0.02" in func_name:
+            direction = "unknown"
+            file_lower = vtk_file.name.lower()
+
+            if "yslice" in file_lower or "normal=(010)" in func_name or "normal=(0 1 0)" in func_name:
+                direction = "y"
+                if "neg" in file_lower or "-0.02" in func_name:
                     slice_type = "y-slice-neg02"
-                elif "0.02" in func_name:
+                elif "pos" in file_lower or "0.02" in func_name:
                     slice_type = "y-slice-pos02"
                 else:
                     slice_type = "y-slice-0"
-            elif "normal=(100)" in func_name or "normal=(1 0 0)" in func_name:
+            elif "xslice" in file_lower or "normal=(100)" in func_name or "normal=(1 0 0)" in func_name:
+                direction = "x"
                 slice_type = "x-slice-0"
+            elif "zslice" in file_lower or "normal=(001)" in func_name or "normal=(0 0 1)" in func_name:
+                direction = "z"
+                if "ground" in file_lower:
+                    slice_type = "z-slice-ground"
+                elif "hub" in file_lower:
+                    slice_type = "z-slice-hub"
+                elif "top" in file_lower:
+                    slice_type = "z-slice-top"
+                else:
+                    slice_type = "z-slice"
 
             slices.append({
                 "time": time_str,
                 "file": str(vtk_file),
                 "type": slice_type,
+                "direction": direction,
                 "name": vtk_file.name
             })
 
