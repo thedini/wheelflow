@@ -46,6 +46,7 @@ try:
         generate_velocity_file_rotating,
         generate_all_field_files_rotating
     )
+    from backend import database as db
 except ImportError:
     from stl_validator import (
         validate_stl_file,
@@ -71,6 +72,7 @@ except ImportError:
         generate_velocity_file_rotating,
         generate_all_field_files_rotating
     )
+    import database as db
 
 # Configuration
 BASE_DIR = Path(__file__).parent.parent
@@ -94,8 +96,26 @@ app = FastAPI(title="WheelFlow", description="Bicycle Wheel CFD Analysis")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
-# In-memory job store (replace with database for production)
-jobs = {}
+# Job store - backed by SQLite database for persistence
+# Initialize jobs dict from database on startup
+def _load_jobs_from_db():
+    """Load all jobs from database into memory cache."""
+    return {job['id']: job for job in db.get_all_jobs()}
+
+jobs = _load_jobs_from_db()
+
+
+def sync_job_to_db(job_id: str, job: dict = None):
+    """Sync job changes to database. Call after significant job updates."""
+    if job is None:
+        job = jobs.get(job_id)
+    if job:
+        db.update_job(
+            job_id,
+            status=job.get('status'),
+            results=job.get('results'),
+            error=job.get('error')
+        )
 
 
 class SimulationConfig(BaseModel):
@@ -371,17 +391,11 @@ async def start_simulation(
         "air": get_air_properties()
     }
 
-    jobs[job_id] = {
-        "id": job_id,
-        "name": name,
-        "status": "queued",
-        "progress": 0,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-        "config": config,
-        "results": None,
-        "error": None
-    }
+    # Create job in database and cache
+    job_data = db.create_job(job_id, config)
+    job_data["name"] = name
+    job_data["progress"] = 0
+    jobs[job_id] = job_data
 
     # Start simulation in background
     background_tasks.add_task(run_simulation, job_id)
@@ -444,18 +458,12 @@ async def start_batch_simulation(
             "batch_yaw_angles": yaw_list,
         }
 
-        jobs[job_id] = {
-            "id": job_id,
-            "name": config["name"],
-            "status": "queued",
-            "progress": 0,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "config": config,
-            "results": None,
-            "error": None,
-            "batch_id": batch_id,
-        }
+        # Create job in database and cache
+        job_data = db.create_job(job_id, config, batch_id=batch_id,
+                                  batch_yaw_angles=yaw_list, yaw_angle=yaw)
+        job_data["name"] = config["name"]
+        job_data["progress"] = 0
+        jobs[job_id] = job_data
 
         sub_jobs.append(job_id)
 
@@ -818,6 +826,8 @@ actions
         job["error"] = str(e)
 
     job["updated_at"] = datetime.now().isoformat()
+    # Persist final job state to database
+    sync_job_to_db(job_id, job)
 
 
 async def generate_case_files(case_dir: Path, config: dict):
@@ -2100,8 +2110,10 @@ async def delete_job(job_id: str):
         import shutil
         shutil.rmtree(case_dir)
 
-    # Remove from jobs dictionary
-    del jobs[job_id]
+    # Remove from database and memory cache
+    db.delete_job(job_id)
+    if job_id in jobs:
+        del jobs[job_id]
 
     return {"message": "Job deleted successfully", "job_id": job_id}
 
