@@ -689,10 +689,51 @@ async def run_simulation(job_id: str):
         await run_openfoam_command(case_dir, "blockMesh")
         job["progress"] = 20
 
-        # Run snappyHexMesh (parallel for quality meshes)
+        # Run snappyHexMesh in SERIAL mode
+        # Parallel snappyHexMesh with reconstruction has issues - run serial for reliability
         job["updated_at"] = datetime.now().isoformat()
         await run_openfoam_command(case_dir, "snappyHexMesh", ["-overwrite"],
-                                   parallel=use_parallel, num_procs=num_procs)
+                                   parallel=False, num_procs=num_procs)
+        job["progress"] = 45
+
+        # Create MRF cellZone using topoSet (if MRF rotation enabled)
+        rotation_method = config.get("rotation_method", "none")
+        if rotation_method == "mrf" and config.get("rolling_enabled", True):
+            wheel_radius = config['wheel_radius']
+            # Create topoSetDict for cylindrical MRF zone
+            topo_set_dict = f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      topoSetDict;
+}}
+
+actions
+(
+    {{
+        name    rotatingZone;
+        type    cellSet;
+        action  new;
+        source  cylinderToCell;
+        point1  (0 -0.15 {wheel_radius});
+        point2  (0 0.15 {wheel_radius});
+        radius  {wheel_radius * 1.05};
+    }}
+    {{
+        name    rotatingZone;
+        type    cellZoneSet;
+        action  new;
+        source  setToCellZone;
+        set     rotatingZone;
+    }}
+);
+"""
+            (case_dir / "system" / "topoSetDict").write_text(topo_set_dict)
+            print("Creating MRF cellZone with topoSet...")
+            await run_openfoam_command(case_dir, "topoSet", parallel=False)
+            print("MRF cellZone created successfully")
+
         job["progress"] = 50
 
         # Run potentialFoam for better initial conditions (helps convergence)
@@ -735,6 +776,19 @@ async def run_simulation(job_id: str):
                 delta_t=0.001
             )
             (case_dir / "system" / "controlDict").write_text(transient_control)
+
+            # Generate dynamicMeshDict for AMI solid body rotation
+            wheel_radius = config['wheel_radius']
+            omega = config['omega']
+            dynamic_mesh = generate_dynamic_mesh_dict(
+                zone_name="rotatingZone",
+                origin=(0, 0, wheel_radius),
+                axis=(0, 1, 0),
+                omega=omega,
+                use_ami=True
+            )
+            (case_dir / "constant" / "dynamicMeshDict").write_text(dynamic_mesh)
+            print(f"AMI rotation enabled: dynamicMeshDict generated (omega={omega:.2f} rad/s)")
 
             print("Running transient simulation with pimpleFoam...")
             await run_openfoam_command(case_dir, "foamRun", ["-solver", "incompressibleFluid"],
@@ -826,6 +880,68 @@ functions
         lRef            {config['wheel_radius'] * 2};
         Aref            {config.get('aref', 0.0225)};
     }}
+
+    // Raw forces in fixed coordinates (for AeroCloud-compatible Cx, Cy, Cz)
+    forces
+    {{
+        type            forces;
+        libs            ("libforces.so");
+        writeControl    timeStep;
+        writeInterval   1;
+
+        patches         (wheel);
+        rho             rhoInf;
+        rhoInf          {air['rho']};
+        CofR            (0 0 0);
+    }}
+
+    pressureSlices
+    {{
+        type            surfaces;
+        libs            ("libsampling.so");
+        writeControl    writeTime;
+
+        surfaceFormat   vtk;
+        fields          (p U);
+
+        interpolationScheme cellPoint;
+
+        surfaces
+        {{
+            ySlice_neg02
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 -0.02 0);
+                normal          (0 1 0);
+                interpolate     true;
+            }}
+            ySlice_0
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0 0);
+                normal          (0 1 0);
+                interpolate     true;
+            }}
+            ySlice_pos02
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0.02 0);
+                normal          (0 1 0);
+                interpolate     true;
+            }}
+            xSlice_0
+            {{
+                type            cuttingPlane;
+                planeType       pointAndNormal;
+                point           (0 0 0);
+                normal          (1 0 0);
+                interpolate     true;
+            }}
+        }}
+    }}
 }}
 """
     (case_dir / "system" / "controlDict").write_text(control_dict)
@@ -915,17 +1031,8 @@ wallDist
         nonortho_correctors = 0
         solver_tol = "1e-06"
 
-    # GPU acceleration for pressure solver
-    if config.get("gpu_acceleration", False):
-        pressure_solver = f'''    p
-    {{
-        solver          AmgX;
-        configFile      "{BASE_DIR}/backend/gpu/amgx_pressure.json";
-        tolerance       {solver_tol};
-        relTol          0.1;
-    }}'''
-    else:
-        pressure_solver = f'''    p
+    # Always use GAMG - AmgX requires special OpenFOAM build with CUDA
+    pressure_solver = f'''    p
     {{
         solver          GAMG;
         smoother        GaussSeidel;
@@ -1023,6 +1130,20 @@ relaxationFactors
         value           uniform (0 0 0);
     }"""
 
+    # Ground BC - slip or moving wall
+    if config.get("ground_type") == "slip":
+        ground_bc = """    ground
+    {
+        type            slip;
+    }"""
+    else:
+        # Moving ground (belt) - matches freestream velocity
+        ground_bc = f"""    ground
+    {{
+        type            movingWallVelocity;
+        value           uniform ({vx} {vy} 0);
+    }}"""
+
     u_file = f"""FoamFile
 {{
     version     2.0;
@@ -1048,11 +1169,7 @@ boundaryField
         inletValue      uniform (0 0 0);
         value           $internalField;
     }}
-    ground
-    {{
-        type            movingWallVelocity;
-        value           uniform ({vx} {vy} 0);
-    }}
+{ground_bc}
     top
     {{
         type            slip;
@@ -1066,17 +1183,50 @@ boundaryField
 """
     (case_dir / "0" / "U").write_text(u_file)
 
-    # Generate MRF properties for steady-state rotation
+    # MRF rotation - cellZone is created in snappyHexMesh
     if rotation_method == "mrf" and config.get("rolling_enabled", True):
-        mrf_props = generate_mrf_properties(
-            zone_name="rotatingZone",
-            origin=wheel_center,
-            axis=(0, 1, 0),
-            omega=omega,
-            non_rotating_patches=["wheel"]  # Wheel surface doesn't rotate in MRF frame
-        )
-        (case_dir / "constant" / "MRFProperties").write_text(mrf_props)
-        print(f"Generated MRF properties for wheel rotation: omega={omega:.2f} rad/s")
+        # Calculate angular velocity: omega = V / R
+        # For a wheel rolling on ground, surface velocity equals ground velocity
+        wheel_radius = config['wheel_radius']
+        angular_velocity = speed / wheel_radius  # rad/s
+
+        mrf_properties = f"""FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      MRFProperties;
+}}
+
+MRF1
+{{
+    cellZone    rotatingZone;
+    active      true;
+
+    // Fixed patches (ground doesn't rotate with wheel)
+    nonRotatingPatches (ground);
+
+    // Rotation axis: Y-axis (wheel rotates around Y)
+    origin      (0 0 {wheel_radius});
+    axis        (0 1 0);
+    omega       {angular_velocity:.6f};  // rad/s = V/R = {speed:.2f}/{wheel_radius:.4f}
+}}
+"""
+        (case_dir / "constant" / "MRFProperties").write_text(mrf_properties)
+        print(f"MRF rotation enabled: omega = {angular_velocity:.2f} rad/s ({angular_velocity * 60 / (2 * 3.14159):.1f} RPM)")
+    else:
+        # No rotation - empty MRF
+        empty_mrf = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      MRFProperties;
+}
+// Wheel rotation disabled
+"""
+        (case_dir / "constant" / "MRFProperties").write_text(empty_mrf)
+        print("Wheel rotation disabled (static wheel simulation)")
 
     # Pressure BC
     p_file = """FoamFile
@@ -1364,6 +1514,15 @@ geometry
         min (0.3 -0.3 0);
         max (3.0 0.3 0.8);
     }}
+
+    // MRF rotation zone - cylinder around the wheel
+    rotatingZone
+    {{
+        type searchableCylinder;
+        point1 (0 -0.1 {config['wheel_radius']});
+        point2 (0 0.1 {config['wheel_radius']});
+        radius {config['wheel_radius'] * 1.05};
+    }}
 }}
 
 castellatedMeshControls
@@ -1403,6 +1562,15 @@ castellatedMeshControls
         {{
             mode inside;
             levels ((1E15 {preset['surfaceLevel'][0]}));
+        }}
+
+        rotatingZone
+        {{
+            mode inside;
+            levels ((1E15 {preset['surfaceLevel'][0]}));
+            cellZone rotatingZone;
+            faceZone rotatingZoneFaces;
+            cellZoneInside inside;
         }}
     }}
 
@@ -1551,25 +1719,57 @@ boundary
     (case_dir / "system" / "blockMeshDict").write_text(block_mesh)
 
 
-def get_openfoam_env(gpu_enabled: bool = False):
-    """Get OpenFOAM environment variables"""
-    env = os.environ.copy()
-    env["PATH"] = f"{OPENFOAM_BIN}:{env.get('PATH', '')}"
+def get_openfoam_env(gpu_enabled: bool = False, parallel: bool = False):
+    """Get OpenFOAM environment by sourcing the official bashrc.
 
-    ld_path = f"{OPENFOAM_DIR}/platforms/linux64GccDPInt32Opt/lib"
-    ld_path += f":{OPENFOAM_DIR}/platforms/linux64GccDPInt32Opt/lib/dummy"
+    This ensures all environment variables (MPI_BUFFER_SIZE, library paths,
+    etc.) are set correctly by OpenFOAM's own configuration.
 
+    Args:
+        gpu_enabled: Include CUDA/AmgX libraries
+        parallel: Not used anymore - bashrc handles MPI setup
+    """
+    import subprocess
+
+    # Source OpenFOAM bashrc and capture the environment
+    bashrc_path = f"{OPENFOAM_DIR}/etc/bashrc"
+    cmd = f'source {bashrc_path} && env'
+
+    result = subprocess.run(
+        ['bash', '-c', cmd],
+        capture_output=True,
+        text=True
+    )
+
+    # Parse environment variables from output
+    env = {}
+    for line in result.stdout.split('\n'):
+        if '=' in line:
+            key, _, value = line.partition('=')
+            env[key] = value
+
+    # Add GPU libraries if enabled
     if gpu_enabled:
-        # Add AmgX solver and dependencies
-        ld_path += ":/home/constantine/OpenFOAM/constantine-13/platforms/linux64GccDPInt32Opt/lib"
-        ld_path += ":/home/constantine/local/amgx"
-        ld_path += ":/usr/local/cuda-12.9/lib64"
+        ld_path = env.get('LD_LIBRARY_PATH', '')
+        gpu_paths = [
+            "/home/constantine/OpenFOAM/constantine-13/platforms/linux64GccDPInt32Opt/lib",
+            "/home/constantine/local/amgx",
+            "/usr/local/cuda-12.9/lib64"
+        ]
+        env['LD_LIBRARY_PATH'] = ':'.join(gpu_paths) + ':' + ld_path
 
-    ld_path += f":/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:{env.get('LD_LIBRARY_PATH', '')}"
-    env["LD_LIBRARY_PATH"] = ld_path
-    env["WM_PROJECT_DIR"] = str(OPENFOAM_DIR)
-    env["FOAM_LIBBIN"] = f"{OPENFOAM_DIR}/platforms/linux64GccDPInt32Opt/lib"
     return env
+
+
+# Cache the OpenFOAM environment to avoid repeated subprocess calls
+_openfoam_env_cache = {}
+
+def get_openfoam_env_cached(gpu_enabled: bool = False):
+    """Cached version of get_openfoam_env for better performance."""
+    cache_key = f"gpu_{gpu_enabled}"
+    if cache_key not in _openfoam_env_cache:
+        _openfoam_env_cache[cache_key] = get_openfoam_env(gpu_enabled=gpu_enabled)
+    return _openfoam_env_cache[cache_key].copy()
 
 
 def generate_decompose_dict(case_dir: Path, num_procs: int):
@@ -1624,12 +1824,16 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
     if args is None:
         args = []
 
-    env = get_openfoam_env(gpu_enabled=gpu_enabled)
-
     # Commands that don't support parallel
     serial_only = ["blockMesh", "surfaceFeatureExtract", "checkMesh"]
 
-    if parallel and command not in serial_only:
+    # Determine if this will actually run in parallel
+    will_run_parallel = parallel and command not in serial_only
+
+    # Get OpenFOAM environment (sourced from official bashrc)
+    env = get_openfoam_env_cached(gpu_enabled=gpu_enabled)
+
+    if will_run_parallel:
         # Generate decomposeParDict if needed
         decompose_dict = case_dir / "system" / "decomposeParDict"
         if not decompose_dict.exists():
@@ -1684,13 +1888,38 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
         if command == "snappyHexMesh":
             print("Reconstructing mesh...")
             reconstruct_proc = await asyncio.create_subprocess_exec(
-                "reconstructParMesh", "-constant",
+                "reconstructParMesh", "-constant", "-mergeTol", "1e-6",
                 cwd=case_dir,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            await reconstruct_proc.communicate()
+            stdout_r, stderr_r = await reconstruct_proc.communicate()
+
+            # Log reconstruction output
+            log_file = case_dir / "log.reconstructParMesh"
+            with open(log_file, 'w') as f:
+                f.write(stdout_r.decode(errors='replace'))
+                if stderr_r:
+                    f.write("\n--- STDERR ---\n")
+                    f.write(stderr_r.decode(errors='replace'))
+
+            if reconstruct_proc.returncode != 0:
+                print(f"WARNING: reconstructParMesh failed: {stderr_r.decode(errors='replace')[:200]}")
+
+            # Verify mesh was reconstructed by checking for wheel patch
+            boundary_file = case_dir / "constant" / "polyMesh" / "boundary"
+            if boundary_file.exists():
+                boundary_content = boundary_file.read_text()
+                if "wheel" not in boundary_content:
+                    print("WARNING: Reconstructed mesh missing 'wheel' patch!")
+
+            # Clean up processor directories after mesh reconstruction
+            # This ensures fresh decomposition for the solver with correct BCs
+            print("Cleaning up processor directories...")
+            import shutil
+            for proc_dir in case_dir.glob("processor*"):
+                shutil.rmtree(proc_dir)
         elif command in ["simpleFoam", "pimpleFoam", "foamRun"]:
             print("Reconstructing fields...")
             reconstruct_proc = await asyncio.create_subprocess_exec(
@@ -1707,13 +1936,16 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
 
 async def extract_results(case_dir: Path, config: dict) -> dict:
     """Extract simulation results"""
+    import re
+
     results = {
         "forces": {},
         "coefficients": {},
+        "fixed_coefficients": {},  # Cx, Cy, Cz in fixed coordinates (AeroCloud-compatible)
         "converged": False
     }
 
-    # Try to read forceCoeffs output
+    # Try to read forceCoeffs output (wind-direction Cd)
     force_file = case_dir / "postProcessing" / "forceCoeffs" / "0" / "forceCoeffs.dat"
     if force_file.exists():
         lines = force_file.read_text().strip().split('\n')
@@ -1726,44 +1958,118 @@ async def extract_results(case_dir: Path, config: dict) -> dict:
                     # Columns: Time, Cm, Cd, Cl, Cl(f), Cl(r)
                     results["coefficients"] = {
                         "Cm": float(parts[1]),
-                        "Cd": float(parts[2]),
-                        "Cl": float(parts[3]),
+                        "Cd": float(parts[2]),  # Drag in wind direction
+                        "Cl": float(parts[3]),  # Lift (Z-direction)
                     }
                     results["converged"] = True
 
-    # Calculate forces from coefficients
-    if results["coefficients"]:
-        rho = config["air"]["rho"]
-        U = config["speed"]
-        A = config.get("aref", 0.0225)  # Reference area (m²) - AeroCloud standard
-        q = 0.5 * rho * U * U  # Dynamic pressure
+    # Try to read raw forces output (fixed coordinates)
+    # OpenFOAM forces function outputs: Time ((px py pz) (vx vy vz) (porousx porousy porousz))
+    raw_force_file = case_dir / "postProcessing" / "forces" / "0" / "forces.dat"
+    if raw_force_file.exists():
+        lines = raw_force_file.read_text().strip().split('\n')
+        if len(lines) > 1:
+            last_line = lines[-1]
+            if not last_line.startswith('#'):
+                # Parse the forces output format: Time ((px py pz) (vx vy vz) ...)
+                # Extract numbers using regex
+                numbers = re.findall(r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?', last_line)
+                if len(numbers) >= 7:
+                    # numbers[0] = time
+                    # numbers[1:4] = pressure force (Fx, Fy, Fz)
+                    # numbers[4:7] = viscous force (Fx, Fy, Fz)
+                    px, py, pz = float(numbers[1]), float(numbers[2]), float(numbers[3])
+                    vx, vy, vz = float(numbers[4]), float(numbers[5]), float(numbers[6])
 
+                    # Total force = pressure + viscous
+                    Fx = px + vx  # X-direction (forward/backward)
+                    Fy = py + vy  # Y-direction (side force)
+                    Fz = pz + vz  # Z-direction (lift)
+
+                    results["raw_forces"] = {
+                        "Fx_N": Fx,
+                        "Fy_N": Fy,
+                        "Fz_N": Fz,
+                        "pressure": {"x": px, "y": py, "z": pz},
+                        "viscous": {"x": vx, "y": vy, "z": vz},
+                    }
+
+    # Calculate coefficients
+    rho = config["air"]["rho"]
+    U = config["speed"]
+    A = config.get("aref", 0.0225)  # Reference area (m²) - AeroCloud standard
+    q = 0.5 * rho * U * U  # Dynamic pressure
+
+    # Wind-direction forces from forceCoeffs
+    if results["coefficients"]:
         Cd = results["coefficients"]["Cd"]
         Cl = results["coefficients"]["Cl"]
 
         results["forces"] = {
-            "drag_N": Cd * q * A,
+            "drag_N": Cd * q * A,  # Drag in wind direction
             "lift_N": Cl * q * A,
         }
 
         results["CdA"] = Cd * A  # Drag area (m²)
         results["CdA_cm2"] = Cd * A * 10000  # CdA in cm² (common unit)
-        results["dynamic_pressure"] = q
-        results["aref"] = A
-        results["aref_cm2"] = A * 10000
 
-        # AeroCloud comparison at 15° yaw
-        aerocloud_targets = {
-            "drag_N": 1.31,
-            "Cd": 0.490,
-            "CdA": 0.011,  # m²
+    # Fixed-coordinate coefficients from raw forces (AeroCloud-compatible)
+    if "raw_forces" in results:
+        Fx = results["raw_forces"]["Fx_N"]
+        Fy = results["raw_forces"]["Fy_N"]
+        Fz = results["raw_forces"]["Fz_N"]
+
+        # Calculate coefficients in fixed coordinates
+        # Cx = force in X-direction (direction of travel) - THIS IS WHAT AEROCLOUD REPORTS
+        # Cy = side force coefficient
+        # Cz = lift coefficient (should match Cl)
+        Cx = Fx / (q * A)
+        Cy = Fy / (q * A)
+        Cz = Fz / (q * A)
+
+        results["fixed_coefficients"] = {
+            "Cx": Cx,  # X-direction drag (AeroCloud-compatible)
+            "Cy": Cy,  # Side force coefficient
+            "Cz": Cz,  # Lift coefficient
         }
+
+        results["raw_forces"]["Fx_drag_N"] = Fx  # Renamed for clarity
+
+        # Calculate CxA (drag area in direction of travel)
+        results["CxA"] = Cx * A
+        results["CxA_cm2"] = Cx * A * 10000
+
+    results["dynamic_pressure"] = q
+    results["aref"] = A
+    results["aref_cm2"] = A * 10000
+
+    # AeroCloud comparison - now using Cx (fixed X-direction) for fair comparison
+    yaw_angle = config.get("yaw_angle", config.get("yaw_angles", [0])[0] if isinstance(config.get("yaw_angles"), list) else 0)
+
+    # AeroCloud reference values at different yaw angles
+    aerocloud_ref = {
+        0: {"Cd": 0.410},
+        10: {"Cd": 0.270},
+        15: {"Cd": 0.490, "drag_N": 1.31},
+    }
+
+    if yaw_angle in aerocloud_ref:
+        ac_data = aerocloud_ref[yaw_angle]
         results["aerocloud_comparison"] = {
-            "targets": aerocloud_targets,
-            "drag_diff_percent": ((results["forces"]["drag_N"] - aerocloud_targets["drag_N"]) / aerocloud_targets["drag_N"]) * 100,
-            "Cd_diff_percent": ((Cd - aerocloud_targets["Cd"]) / aerocloud_targets["Cd"]) * 100,
-            "note": "AeroCloud reference is at 15° yaw angle"
+            "yaw_angle": yaw_angle,
+            "aerocloud_Cd": ac_data["Cd"],
+            "note": "AeroCloud reports Cx (X-direction force coefficient)"
         }
+
+        if "fixed_coefficients" in results:
+            Cx = results["fixed_coefficients"]["Cx"]
+            results["aerocloud_comparison"]["wheelflow_Cx"] = Cx
+            results["aerocloud_comparison"]["Cx_diff_percent"] = ((Cx - ac_data["Cd"]) / ac_data["Cd"]) * 100
+
+        if results["coefficients"]:
+            Cd = results["coefficients"]["Cd"]
+            results["aerocloud_comparison"]["wheelflow_Cd_wind"] = Cd
+            results["aerocloud_comparison"]["Cd_wind_diff_percent"] = ((Cd - ac_data["Cd"]) / ac_data["Cd"]) * 100
 
     return results
 
@@ -1782,6 +2088,24 @@ async def get_job(job_id: str):
     return jobs[job_id]
 
 
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Delete a job and its associated case directory"""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+
+    # Remove case directory if it exists
+    case_dir = CASES_DIR / job_id
+    if case_dir.exists():
+        import shutil
+        shutil.rmtree(case_dir)
+
+    # Remove from jobs dictionary
+    del jobs[job_id]
+
+    return {"message": "Job deleted successfully", "job_id": job_id}
+
+
 @app.get("/api/jobs/{job_id}/results")
 async def get_results(job_id: str):
     """Get job results"""
@@ -1793,6 +2117,47 @@ async def get_results(job_id: str):
         raise HTTPException(400, f"Job not complete. Status: {job['status']}")
 
     return job["results"]
+
+
+@app.get("/api/jobs/{job_id}/parts_breakdown")
+async def get_parts_breakdown(job_id: str):
+    """
+    Get drag breakdown by wheel component.
+
+    Returns force contribution for each detected wheel part
+    (rim, tire, spokes, hub, disc).
+    """
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+
+    job = jobs[job_id]
+
+    # Get case directory
+    case_dir = CASES_DIR / job_id
+
+    if not case_dir.exists():
+        raise HTTPException(404, "Case directory not found")
+
+    # Import per-part force extraction
+    try:
+        from backend.visualization.force_distribution import extract_per_part_forces, detect_wheel_parts
+    except ImportError:
+        from visualization.force_distribution import extract_per_part_forces, detect_wheel_parts
+
+    # Extract per-part forces
+    parts_data = extract_per_part_forces(case_dir)
+
+    if not parts_data.get("has_parts"):
+        # Fallback: detect parts and return message
+        detected_parts = detect_wheel_parts(case_dir)
+        return {
+            "has_parts": False,
+            "detected_parts": detected_parts,
+            "message": "No per-part force data available. Wheel geometry may be a single surface.",
+            "parts": []
+        }
+
+    return parts_data
 
 
 @app.get("/api/system/stats")
@@ -1877,9 +2242,26 @@ async def get_hero_image(job_id: str, regenerate: bool = False):
     Get or generate hero image (3D streamline visualization).
 
     Uses ParaView if available, falls back to placeholder.
+
+    Query params:
+        regenerate: bool - Force regeneration of the image
+
+    Returns:
+        PNG image file
+
+    Errors:
+        404: Job not found
+        503: ParaView not available
+        504: Generation timeout (5 minute limit)
     """
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
+
+    job = jobs[job_id]
+
+    # Don't generate if simulation is not complete
+    if job["status"] != "complete":
+        raise HTTPException(400, f"Job not complete. Status: {job['status']}")
 
     case_dir = CASES_DIR / job_id
     viz_dir = case_dir / "visualizations"
@@ -1891,18 +2273,26 @@ async def get_hero_image(job_id: str, regenerate: bool = False):
         try:
             from backend.visualization.hero_image import generate_hero_image, check_paraview_available
 
-            available, _ = check_paraview_available()
-            if available:
-                result = generate_hero_image(case_dir, hero_path)
-                if not result.get("success"):
-                    raise HTTPException(500, f"Hero image generation failed: {result.get('error')}")
-            else:
-                raise HTTPException(503, "ParaView not available for visualization")
-        except ImportError:
-            raise HTTPException(503, "Visualization module not available")
+            available, version = check_paraview_available()
+            if not available:
+                raise HTTPException(503, f"ParaView not available: {version}")
+
+            # Run generation with timeout handling
+            # The generate_hero_image function already has a 5-minute timeout
+            result = generate_hero_image(case_dir, hero_path)
+
+            if not result.get("success"):
+                error_msg = result.get('error', 'Unknown error')
+                if 'timeout' in error_msg.lower():
+                    raise HTTPException(504, "Hero image generation timeout (5 min)")
+                raise HTTPException(500, f"Hero image generation failed: {error_msg}")
+
+        except ImportError as e:
+            raise HTTPException(503, f"Visualization module not available: {e}")
 
     if hero_path.exists():
-        return FileResponse(hero_path, media_type="image/png")
+        return FileResponse(hero_path, media_type="image/png",
+                            headers={"Cache-Control": "no-cache" if regenerate else "max-age=3600"})
     else:
         raise HTTPException(404, "Hero image not found")
 
@@ -2000,22 +2390,108 @@ async def get_available_slices(job_id: str):
         raise HTTPException(404, "Job not found")
 
     case_dir = CASES_DIR / job_id
-    slices_dir = case_dir / "postProcessing" / "pressureSlices"
+    post_dir = case_dir / "postProcessing"
 
-    if not slices_dir.exists():
+    if not post_dir.exists():
+        return {"slices": [], "note": "No post-processing data. Run postprocess first."}
+
+    # Find VTK files in all postProcessing subdirectories
+    slices = []
+    for vtk_file in post_dir.rglob("*.vtk"):
+        # Extract slice name from directory path
+        rel_path = vtk_file.relative_to(post_dir)
+        parts = rel_path.parts
+        if len(parts) >= 2:
+            func_name = parts[0]
+            time_str = parts[1]
+            # Parse slice type from function name
+            slice_type = "unknown"
+            if "normal=(010)" in func_name or "normal=(0 1 0)" in func_name:
+                slice_type = "y-slice"
+                if "-0.02" in func_name:
+                    slice_type = "y-slice-neg02"
+                elif "0.02" in func_name:
+                    slice_type = "y-slice-pos02"
+                else:
+                    slice_type = "y-slice-0"
+            elif "normal=(100)" in func_name or "normal=(1 0 0)" in func_name:
+                slice_type = "x-slice-0"
+
+            slices.append({
+                "time": time_str,
+                "file": str(vtk_file),
+                "type": slice_type,
+                "name": vtk_file.name
+            })
+
+    if not slices:
         return {"slices": [], "note": "No pressure slices generated. Enable in controlDict."}
 
-    # Find available slice files
-    slices = []
-    for time_dir in slices_dir.iterdir():
-        if time_dir.is_dir():
-            for slice_file in time_dir.glob("*.vtk"):
-                slices.append({
-                    "time": time_dir.name,
-                    "file": slice_file.name
-                })
-
     return {"slices": slices}
+
+
+@app.post("/api/jobs/{job_id}/postprocess")
+async def run_postprocessing(job_id: str):
+    """Run post-processing on existing case to generate pressure slices."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+
+    case_dir = CASES_DIR / job_id
+
+    # Check if results exist
+    latest_time = None
+    for d in case_dir.iterdir():
+        if d.is_dir():
+            try:
+                t = float(d.name)
+                if latest_time is None or t > latest_time:
+                    latest_time = t
+            except ValueError:
+                pass
+
+    if latest_time is None:
+        raise HTTPException(400, "No simulation results found")
+
+    env = get_openfoam_env()
+
+    # OpenFOAM 13 uses foamPostProcess with cutPlaneSurface function
+    slice_configs = [
+        ("(0 -0.02 0)", "(0 1 0)"),  # Y-slice at y=-0.02
+        ("(0 0 0)", "(0 1 0)"),       # Y-slice at y=0
+        ("(0 0.02 0)", "(0 1 0)"),    # Y-slice at y=0.02
+        ("(0 0 0)", "(1 0 0)"),       # X-slice at x=0
+    ]
+
+    errors = []
+    for point, normal in slice_configs:
+        func_arg = f'cutPlaneSurface(point={point}, normal={normal}, fields=(p U))'
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "foamPostProcess", "-func", func_arg, "-latestTime",
+                cwd=str(case_dir),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                errors.append(f"Slice {point}: {stderr.decode() or stdout.decode()}")
+        except Exception as e:
+            errors.append(f"Slice {point}: {str(e)}")
+
+    if errors:
+        return {
+            "success": False,
+            "error": "\n".join(errors),
+            "partial": len(errors) < len(slice_configs)
+        }
+
+    return {
+        "success": True,
+        "message": "Post-processing completed - 4 pressure slices generated",
+        "time": latest_time
+    }
 
 
 # =============================================================================
