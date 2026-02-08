@@ -2268,6 +2268,69 @@ async def get_convergence_data(job_id: str):
     return data
 
 
+@app.get("/api/yaw_sweep/{batch_prefix}")
+async def get_yaw_sweep_data(batch_prefix: str):
+    """
+    Get Cd values across all yaw angles for a batch of simulations.
+
+    Batch jobs use naming convention: {batch_prefix}_00, {batch_prefix}_05, etc.
+    where the suffix indicates the yaw angle in degrees.
+    """
+    yaw_angles = [0, 5, 10, 15, 20]
+    results = []
+
+    for angle in yaw_angles:
+        job_id = f"{batch_prefix}_{angle:02d}"
+        if job_id in jobs:
+            job = jobs[job_id]
+            cd = None
+            cl = None
+
+            # Try to get final Cd/Cl from job results
+            if job.get("results") and job["results"].get("coefficients"):
+                cd = job["results"]["coefficients"].get("Cd")
+                cl = job["results"]["coefficients"].get("Cl")
+
+            # If not in results, try to read from forceCoeffs file
+            if cd is None:
+                case_dir = CASES_DIR / job_id
+                force_file = case_dir / "postProcessing" / "forceCoeffs" / "0" / "forceCoeffs.dat"
+                if force_file.exists():
+                    try:
+                        with open(force_file, 'r') as f:
+                            lines = [l for l in f if not l.startswith('#') and l.strip()]
+                            if lines:
+                                parts = lines[-1].split()
+                                if len(parts) >= 4:
+                                    cd = float(parts[2])
+                                    cl = float(parts[3])
+                    except Exception:
+                        pass
+
+            results.append({
+                "angle": angle,
+                "job_id": job_id,
+                "Cd": cd,
+                "Cl": cl,
+                "status": job.get("status", "unknown")
+            })
+        else:
+            results.append({
+                "angle": angle,
+                "job_id": job_id,
+                "Cd": None,
+                "Cl": None,
+                "status": "not_found"
+            })
+
+    return {
+        "batch_prefix": batch_prefix,
+        "angles": yaw_angles,
+        "results": results,
+        "complete": all(r["Cd"] is not None for r in results)
+    }
+
+
 # =============================================================================
 # Visualization API Endpoints
 # =============================================================================
@@ -2305,22 +2368,35 @@ async def get_hero_image(job_id: str, regenerate: bool = False):
     hero_path = viz_dir / "hero.png"
 
     if not hero_path.exists() or regenerate:
-        # Try to generate with ParaView
+        # Try to generate with ParaView first, then fall back to matplotlib
         try:
-            from backend.visualization.hero_image import generate_hero_image, check_paraview_available
+            from backend.visualization.hero_image import (
+                generate_hero_image,
+                check_paraview_available,
+                generate_simple_hero_image
+            )
 
             available, version = check_paraview_available()
-            if not available:
-                raise HTTPException(503, f"ParaView not available: {version}")
 
-            # Run generation with timeout handling
-            # The generate_hero_image function already has a 5-minute timeout
-            result = generate_hero_image(case_dir, hero_path)
+            if available:
+                # Run generation with timeout handling
+                # The generate_hero_image function already has a 5-minute timeout
+                result = generate_hero_image(case_dir, hero_path)
+
+                if not result.get("success"):
+                    error_msg = result.get('error', 'Unknown error')
+                    if 'timeout' in error_msg.lower():
+                        # Fall back to simple image on timeout
+                        result = generate_simple_hero_image(case_dir, hero_path)
+                    else:
+                        # Try fallback on other errors too
+                        result = generate_simple_hero_image(case_dir, hero_path)
+            else:
+                # ParaView not available - use matplotlib fallback
+                result = generate_simple_hero_image(case_dir, hero_path)
 
             if not result.get("success"):
                 error_msg = result.get('error', 'Unknown error')
-                if 'timeout' in error_msg.lower():
-                    raise HTTPException(504, "Hero image generation timeout (5 min)")
                 raise HTTPException(500, f"Hero image generation failed: {error_msg}")
 
         except ImportError as e:
@@ -2479,6 +2555,64 @@ async def get_available_slices(job_id: str):
         return {"slices": [], "note": "No pressure slices generated. Enable in controlDict."}
 
     return {"slices": slices}
+
+
+@app.get("/api/jobs/{job_id}/viz/slice/{slice_name}.png")
+async def get_slice_image(job_id: str, slice_name: str):
+    """
+    Render a pressure slice as PNG image.
+
+    Args:
+        job_id: Simulation job ID
+        slice_name: Name of the slice file (without .vtk extension)
+
+    Returns:
+        PNG image of the pressure field
+    """
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+
+    case_dir = CASES_DIR / job_id
+    viz_dir = case_dir / "visualizations" / "slices"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+
+    # Output image path
+    output_path = viz_dir / f"{slice_name}.png"
+
+    # If image already exists, return it
+    if output_path.exists():
+        return FileResponse(output_path, media_type="image/png")
+
+    # Find the VTK file
+    post_dir = case_dir / "postProcessing"
+    vtk_file = None
+
+    for f in post_dir.rglob(f"{slice_name}*.vtk"):
+        vtk_file = f
+        break
+
+    # Also try without the exact match
+    if not vtk_file:
+        for f in post_dir.rglob("*.vtk"):
+            if slice_name.lower() in f.name.lower():
+                vtk_file = f
+                break
+
+    if not vtk_file:
+        raise HTTPException(404, f"VTK file not found for slice: {slice_name}")
+
+    # Render the slice image
+    try:
+        from backend.visualization.pressure_slices import render_vtk_slice_image
+        result = render_vtk_slice_image(vtk_file, output_path)
+
+        if not result.get("success"):
+            raise HTTPException(500, f"Slice rendering failed: {result.get('error')}")
+
+        return FileResponse(output_path, media_type="image/png")
+
+    except ImportError as e:
+        raise HTTPException(503, f"Visualization module not available: {e}")
 
 
 @app.post("/api/jobs/{job_id}/postprocess")

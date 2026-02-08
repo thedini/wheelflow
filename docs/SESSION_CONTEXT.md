@@ -382,3 +382,49 @@ pytest tests/ -v
 # Run UI tests only
 pytest tests/test_ui_playwright.py -v
 ```
+
+---
+
+## Session: 2026-02-07 - Validation Analysis (WheelFlow vs AeroCloud)
+
+### Key Finding: Different Wheel Geometry
+
+**Root Cause of Discrepancy:** WheelFlow simulates a DISC wheel, AeroCloud used a SPOKED wheel (TSV3.4)
+
+| Metric @ 15° Yaw | WheelFlow | AeroCloud | Ratio |
+|------------------|-----------|-----------|-------|
+| Cd | 1.30 | 0.49 | 2.6× |
+| Fd | 3.45 N | 1.31 N | 2.6× |
+
+**Physics Validation:** Cd ≈ 1.3 for a disc wheel is CORRECT (reference: cylinders/discs have Cd = 1.0-1.2)
+
+### Test Scenarios for Cowork/AeroCloud
+
+**Scenario 1: Disc Wheel**
+- Use current WheelFlow disc wheel STL
+- Expected Cd: 1.0-1.3
+- Run in both WheelFlow and AeroCloud
+
+**Scenario 2: Spoked Wheel**
+- Obtain TSV3.4 spoked wheel STL from AeroCloud
+- Expected Cd: 0.4-0.6
+- Run in both platforms
+
+### Validation Checklist
+- [ ] Run disc wheel in AeroCloud
+- [ ] Obtain spoked wheel STL (TSV3.4)
+- [ ] Run spoked wheel in WheelFlow
+- [ ] Compare at 0°, 5°, 10°, 15°, 20° yaw
+
+### Files Created
+- Full analysis: `docs/VALIDATION_ANALYSIS.md`
+
+### Case Directories Analyzed
+- `cases/7a430d2b_*` (disc wheel, yaw 0-20°)
+- `cases/91993393_*` (disc wheel, yaw 0-10°)
+
+### Current Wheel Geometry (Disc)
+- Diameter: 0.684 m
+- Width: 34 mm
+- Triangles: 49,036 (29,872 at center = solid disc)
+- Position: Bottom at Z=0.0002 m (on ground) ✓

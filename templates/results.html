@@ -235,6 +235,44 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Pressure Slices -->
+                <div class="slice-card">
+                    <div class="slice-header">
+                        <h3>PRESSURE SLICES</h3>
+                        <div class="slice-controls">
+                            <select id="slice-selector" class="slice-select" onchange="loadSliceImage()">
+                                <option value="">Select slice...</option>
+                                <option value="y-slice-0">Y=0 (Center)</option>
+                                <option value="y-slice-neg02">Y=-0.02</option>
+                                <option value="y-slice-pos02">Y=+0.02</option>
+                                <option value="x-slice-0">X=0</option>
+                            </select>
+                            <button class="slice-btn" onclick="downloadSliceImage()" title="Download Slice">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="slice-container" id="slice-container">
+                        <div class="slice-placeholder" id="slice-placeholder">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.5">
+                                <rect x="2" y="2" width="20" height="20" rx="2"/>
+                                <line x1="12" y1="2" x2="12" y2="22"/>
+                                <line x1="2" y1="12" x2="22" y2="12"/>
+                            </svg>
+                            <span>Select a slice to view</span>
+                        </div>
+                        <div class="slice-loading hidden" id="slice-loading">
+                            <div class="slice-spinner"></div>
+                            <span>Rendering slice...</span>
+                        </div>
+                        <img id="slice-image" class="slice-image hidden" alt="Pressure slice">
+                    </div>
+                </div>
             </section>
 
             <!-- Right Column - Analysis -->

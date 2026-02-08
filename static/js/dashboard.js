@@ -455,6 +455,15 @@ function updateMetrics(job) {
 
     // Update convergence chart
     updateConvergenceChart(job);
+
+    // Update yaw sweep polar chart (if this is part of a batch)
+    loadYawSweepData(job.id);
+
+    // Load visualization data when complete
+    if (job.status === 'complete') {
+        loadPressureSurface(job.id);
+        loadAvailableSlices();
+    }
 }
 
 // Update comparison table
@@ -588,59 +597,77 @@ async function updateConvergenceChart(job) {
                 // Hide placeholder
                 hideChartPlaceholder('convergence-chart');
 
+                // Sample data for performance (max 500 points)
+                let times = data.time;
+                let cdValues = data.Cd;
+                const maxPoints = 500;
+
+                if (times.length > maxPoints) {
+                    const step = Math.ceil(times.length / maxPoints);
+                    const sampledTimes = [];
+                    const sampledCd = [];
+
+                    for (let i = 0; i < times.length; i += step) {
+                        sampledTimes.push(times[i]);
+                        sampledCd.push(cdValues[i]);
+                    }
+
+                    // Always include the last point
+                    if (sampledTimes[sampledTimes.length - 1] !== times[times.length - 1]) {
+                        sampledTimes.push(times[times.length - 1]);
+                        sampledCd.push(cdValues[cdValues.length - 1]);
+                    }
+
+                    times = sampledTimes;
+                    cdValues = sampledCd;
+                }
+
                 // Use real data
-                convergenceChart.data.labels = data.time;
-                convergenceChart.data.datasets[0].data = data.Cd;
+                convergenceChart.data.labels = times;
+                convergenceChart.data.datasets[0].data = cdValues;
                 convergenceChart.update('none');
 
-                // Update iteration count
+                // Update iteration count (show total, not sampled)
                 document.getElementById('iterations').textContent = data.time.length;
                 document.getElementById('of-iteration').textContent = data.time.length;
 
-                // Update residual from last value
-                if (data.residual && data.residual.length > 0) {
-                    const lastRes = data.residual[data.residual.length - 1];
-                    document.getElementById('residual-value').textContent = lastRes.toExponential(1);
+                // Update final Cd value in the metrics
+                if (data.Cd && data.Cd.length > 0) {
+                    const finalCd = data.Cd[data.Cd.length - 1];
+                    const cdElement = document.getElementById('cd-value');
+                    if (cdElement) {
+                        cdElement.textContent = finalCd.toFixed(4);
+                    }
                 }
 
-                return;
+                // Update final Cl value if available
+                if (data.Cl && data.Cl.length > 0) {
+                    const finalCl = data.Cl[data.Cl.length - 1];
+                    const clElement = document.getElementById('cl-value');
+                    if (clElement) {
+                        clElement.textContent = finalCl.toFixed(4);
+                    }
+                }
+
+                // Update final Cm value if available
+                if (data.Cm && data.Cm.length > 0) {
+                    const finalCm = data.Cm[data.Cm.length - 1];
+                    const cmElement = document.getElementById('cm-value');
+                    if (cmElement) {
+                        cmElement.textContent = finalCm.toFixed(4);
+                    }
+                }
+
+                return; // Successfully loaded real data, skip fallback
             }
         }
     } catch (error) {
-        console.log('Using fallback convergence data:', error);
+        console.log('Convergence API error:', error);
     }
 
-    // Fallback to simulated data if API fails
-    const iterations = Math.round(job.results?.coefficients?.time || job.progress * 5);
-    const finalCd = job.results?.coefficients?.Cd || 0.15;
-
-    if (iterations > 0) {
-        // Hide placeholder since we have some data
-        hideChartPlaceholder('convergence-chart');
-
-        const labels = [];
-        const data = [];
-
-        for (let i = 1; i <= iterations; i += Math.max(1, Math.floor(iterations / 50))) {
-            labels.push(i);
-            const progress = i / iterations;
-            const noise = (1 - progress) * 0.1 * (Math.random() - 0.5);
-            const value = finalCd * (1 + (1 - progress) * 2) + noise;
-            data.push(value);
-        }
-
-        labels.push(iterations);
-        data.push(finalCd);
-
-        convergenceChart.data.labels = labels;
-        convergenceChart.data.datasets[0].data = data;
-        convergenceChart.update('none');
-
-        // Update iteration display
-        document.getElementById('iterations').textContent = iterations;
-        document.getElementById('of-iteration').textContent = iterations;
-    } else {
-        // Show placeholder when no data
+    // Only show placeholder when no real data is available
+    // Don't generate fake simulated data
+    if (!job || job.status === 'queued' || job.progress === 0) {
         showChartPlaceholder('convergence-chart', 'Waiting for convergence data...');
     }
 }
@@ -694,6 +721,78 @@ function initPolarChart() {
             }
         }
     });
+}
+
+// Load yaw sweep data for polar chart
+async function loadYawSweepData(jobId) {
+    if (!polarChart || !jobId) return;
+
+    // Extract batch prefix from job ID (e.g., "7a430d2b_00" -> "7a430d2b")
+    const parts = jobId.split('_');
+    if (parts.length < 2) {
+        console.log('Job ID does not appear to be part of a yaw sweep batch');
+        return;
+    }
+
+    const batchPrefix = parts.slice(0, -1).join('_');
+
+    try {
+        const response = await fetch(`/api/yaw_sweep/${batchPrefix}`);
+        if (!response.ok) {
+            console.log('Yaw sweep data not available');
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data.results && data.results.length > 0) {
+            // Extract Cd values for each angle
+            const cdValues = data.results.map(r => r.Cd);
+            const clValues = data.results.map(r => r.Cl);
+
+            // Check if we have at least some valid data
+            const validCdCount = cdValues.filter(v => v !== null).length;
+            if (validCdCount === 0) {
+                console.log('No valid Cd values in yaw sweep');
+                return;
+            }
+
+            // Update polar chart with real data
+            polarChart.data.datasets[0].data = cdValues.map(v => v !== null ? v : 0);
+            polarChart.data.datasets[0].label = 'Cd';
+
+            // Add Cl dataset if we have Cl data
+            if (clValues.some(v => v !== null)) {
+                if (polarChart.data.datasets.length < 2) {
+                    polarChart.data.datasets.push({
+                        label: 'Cl',
+                        data: clValues.map(v => v !== null ? v : 0),
+                        borderColor: '#1d9bf0',
+                        backgroundColor: 'rgba(29, 155, 240, 0.2)',
+                        pointBackgroundColor: '#1d9bf0',
+                        pointBorderColor: '#fff',
+                        pointRadius: 4
+                    });
+                } else {
+                    polarChart.data.datasets[1].data = clValues.map(v => v !== null ? v : 0);
+                }
+            }
+
+            polarChart.update('none');
+
+            // Update yaw sweep status indicator
+            const sweepStatus = document.getElementById('yaw-sweep-status');
+            if (sweepStatus) {
+                sweepStatus.textContent = data.complete ?
+                    `${validCdCount}/5 angles complete` :
+                    `${validCdCount}/5 angles running`;
+            }
+
+            console.log('Yaw sweep data loaded:', data.results);
+        }
+    } catch (error) {
+        console.log('Error loading yaw sweep data:', error);
+    }
 }
 
 // Format numbers with K, M suffixes
@@ -1639,21 +1738,279 @@ async function loadPressureSurface(jobId) {
     if (!scene3d || !jobId) return;
 
     try {
-        // Try to load PLY file
-        const response = await fetch(`/api/jobs/${jobId}/viz/pressure_surface.ply`);
+        // Fetch JSON geometry with pressure data
+        const response = await fetch(`/api/jobs/${jobId}/viz/pressure_surface.json`);
         if (!response.ok) {
             console.log('Pressure surface not available yet');
             return;
         }
 
-        // For now, just update the placeholder wheel color to indicate data loaded
-        if (wheelMesh) {
-            wheelMesh.material.color.setHex(0x00d26a);
+        const data = await response.json();
+
+        if (!data.vertices || !data.indices || data.vertices.length === 0) {
+            console.log('Pressure surface data incomplete');
+            return;
         }
+
+        // Remove existing wheel mesh
+        if (wheelMesh) {
+            scene3d.remove(wheelMesh);
+            wheelMesh = null;
+        }
+
+        // Create BufferGeometry from JSON data
+        const geometry = new THREE.BufferGeometry();
+
+        // Set vertices
+        const vertices = new Float32Array(data.vertices);
+        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+
+        // Set indices
+        const indices = new Uint32Array(data.indices);
+        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+        // Compute normals for proper lighting
+        geometry.computeVertexNormals();
+
+        // Create vertex colors based on pressure
+        const colors = createPressureColors(
+            data.vertices,
+            data.indices,
+            data.pressures,
+            data.pressure_range
+        );
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // Create mesh with vertex colors
+        const material = new THREE.MeshPhongMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide,
+            shininess: 30,
+            specular: 0x222222
+        });
+
+        wheelMesh = new THREE.Mesh(geometry, material);
+
+        // Center the geometry
+        geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        geometry.boundingBox.getCenter(center);
+        wheelMesh.position.sub(center);
+
+        scene3d.add(wheelMesh);
+
+        // Update camera to fit the new geometry
+        const box = geometry.boundingBox;
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        camera3d.position.set(maxDim * 2, maxDim * 1.5, maxDim * 2);
+        camera3d.lookAt(0, 0, 0);
+        if (controls3d) {
+            controls3d.target.set(0, 0, 0);
+            controls3d.update();
+        }
+
+        // Update pressure range display
+        if (data.pressure_range) {
+            const pMin = data.pressure_range[0].toFixed(1);
+            const pMax = data.pressure_range[1].toFixed(1);
+            const legendEl = document.getElementById('pressure-legend');
+            if (legendEl) {
+                legendEl.textContent = `Pressure: ${pMin} to ${pMax} Pa`;
+            }
+        }
+
+        console.log(`Pressure surface loaded: ${data.n_vertices} vertices, ${data.n_triangles} triangles`);
 
     } catch (error) {
         console.log('Could not load pressure surface:', error);
     }
+}
+
+// Create vertex colors based on face pressure values
+function createPressureColors(vertices, indices, pressures, pressureRange) {
+    const numVertices = vertices.length / 3;
+    const colors = new Float32Array(numVertices * 3);
+
+    // Default to gray if no pressure data
+    if (!pressures || pressures.length === 0) {
+        for (let i = 0; i < numVertices; i++) {
+            colors[i * 3] = 0.7;     // R
+            colors[i * 3 + 1] = 0.7; // G
+            colors[i * 3 + 2] = 0.7; // B
+        }
+        return colors;
+    }
+
+    // Determine pressure range
+    let pMin, pMax;
+    if (pressureRange && pressureRange.length === 2) {
+        pMin = pressureRange[0];
+        pMax = pressureRange[1];
+    } else {
+        pMin = Math.min(...pressures);
+        pMax = Math.max(...pressures);
+    }
+
+    // Ensure range is not zero
+    if (pMax - pMin < 1e-10) {
+        pMax = pMin + 1;
+    }
+
+    // Accumulate colors per vertex from adjacent faces
+    const vertexPressureSum = new Float32Array(numVertices);
+    const vertexPressureCount = new Uint32Array(numVertices);
+
+    // Each face has 3 indices (triangulated)
+    const numTriangles = indices.length / 3;
+    for (let tri = 0; tri < numTriangles; tri++) {
+        // Map triangle back to original face for pressure lookup
+        const faceIndex = Math.min(tri, pressures.length - 1);
+        const p = pressures[faceIndex];
+
+        const i0 = indices[tri * 3];
+        const i1 = indices[tri * 3 + 1];
+        const i2 = indices[tri * 3 + 2];
+
+        vertexPressureSum[i0] += p;
+        vertexPressureSum[i1] += p;
+        vertexPressureSum[i2] += p;
+
+        vertexPressureCount[i0]++;
+        vertexPressureCount[i1]++;
+        vertexPressureCount[i2]++;
+    }
+
+    // Convert averaged pressure to color (blue-white-red diverging colormap)
+    for (let i = 0; i < numVertices; i++) {
+        let p;
+        if (vertexPressureCount[i] > 0) {
+            p = vertexPressureSum[i] / vertexPressureCount[i];
+        } else {
+            p = (pMin + pMax) / 2;
+        }
+
+        // Normalize to [0, 1]
+        const t = Math.max(0, Math.min(1, (p - pMin) / (pMax - pMin)));
+
+        // Blue-white-red diverging colormap
+        let r, g, b;
+        if (t < 0.5) {
+            // Blue to white (low pressure)
+            const s = t * 2;
+            r = s;
+            g = s;
+            b = 1.0;
+        } else {
+            // White to red (high pressure)
+            const s = (t - 0.5) * 2;
+            r = 1.0;
+            g = 1.0 - s;
+            b = 1.0 - s;
+        }
+
+        colors[i * 3] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
+    }
+
+    return colors;
+}
+
+// Pressure Slice Viewer Functions
+async function loadAvailableSlices() {
+    if (!currentJobId) return;
+
+    try {
+        const response = await fetch(`/api/jobs/${currentJobId}/viz/slices`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const selector = document.getElementById('slice-selector');
+        if (!selector) return;
+
+        // Clear existing options except the first
+        while (selector.options.length > 1) {
+            selector.remove(1);
+        }
+
+        // Add available slices
+        if (data.slices && data.slices.length > 0) {
+            const sliceNames = {
+                'y-slice-0': 'Y=0 (Center)',
+                'y-slice-neg02': 'Y=-0.02',
+                'y-slice-pos02': 'Y=+0.02',
+                'x-slice-0': 'X=0',
+                'z-slice': 'Z slice'
+            };
+
+            for (const slice of data.slices) {
+                const opt = document.createElement('option');
+                opt.value = slice.name.replace('.vtk', '');
+                opt.textContent = sliceNames[slice.type] || slice.name;
+                selector.appendChild(opt);
+            }
+        }
+    } catch (error) {
+        console.log('Could not load available slices:', error);
+    }
+}
+
+async function loadSliceImage() {
+    const selector = document.getElementById('slice-selector');
+    if (!selector || !selector.value || !currentJobId) return;
+
+    const sliceName = selector.value;
+    const container = document.getElementById('slice-container');
+    const placeholder = document.getElementById('slice-placeholder');
+    const loading = document.getElementById('slice-loading');
+    const image = document.getElementById('slice-image');
+
+    if (!container || !image) return;
+
+    // Show loading state
+    if (placeholder) placeholder.classList.add('hidden');
+    if (loading) loading.classList.remove('hidden');
+    image.classList.add('hidden');
+
+    try {
+        const imageUrl = `/api/jobs/${currentJobId}/viz/slice/${sliceName}.png`;
+
+        // Create a new image to test loading
+        const testImg = new Image();
+        testImg.onload = () => {
+            image.src = imageUrl;
+            image.classList.remove('hidden');
+            if (loading) loading.classList.add('hidden');
+        };
+        testImg.onerror = () => {
+            console.log('Slice image not available');
+            if (loading) loading.classList.add('hidden');
+            if (placeholder) {
+                placeholder.classList.remove('hidden');
+                placeholder.querySelector('span').textContent = 'Slice image unavailable';
+            }
+        };
+        testImg.src = imageUrl;
+
+    } catch (error) {
+        console.log('Error loading slice image:', error);
+        if (loading) loading.classList.add('hidden');
+        if (placeholder) placeholder.classList.remove('hidden');
+    }
+}
+
+function downloadSliceImage() {
+    const image = document.getElementById('slice-image');
+    if (!image || image.classList.contains('hidden') || !image.src) {
+        alert('No slice image to download');
+        return;
+    }
+
+    const link = document.createElement('a');
+    link.href = image.src;
+    link.download = `pressure_slice_${currentJobId}.png`;
+    link.click();
 }
 
 // Parts Breakdown Chart

@@ -968,6 +968,128 @@ body {
     display: none;
 }
 
+/* Pressure Slice Card */
+.slice-card {
+    background: var(--bg-card);
+    border-radius: 8px;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    margin-top: 1rem;
+}
+
+.slice-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.slice-header h3 {
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+}
+
+.slice-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.slice-select {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.slice-select:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.slice-btn {
+    padding: 0.35rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.slice-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.slice-container {
+    position: relative;
+    min-height: 200px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.slice-image {
+    width: 100%;
+    height: auto;
+    max-height: 300px;
+    object-fit: contain;
+}
+
+.slice-image.hidden {
+    display: none;
+}
+
+.slice-loading {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.slice-loading.hidden {
+    display: none;
+}
+
+.slice-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.slice-placeholder {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.slice-placeholder.hidden {
+    display: none;
+}
+
 /* Telemetry Bar (Bottom) */
 .telemetry-bar {
     display: flex;

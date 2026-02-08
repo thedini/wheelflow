@@ -76,6 +76,17 @@ For Claude Code integration, an MCP server is available at:
 - Binary: `/home/constantine/repo/openfoam-mcp-server/build/openfoam-mcp-server-test`
 - Provides CFD analysis tools accessible via Claude
 
+## Validation Status (2026-02-07)
+**Pending:** Disc vs Spoked wheel comparison with AeroCloud
+
+Current WheelFlow simulations use a DISC wheel (Cd ≈ 1.3).
+AeroCloud reference uses a SPOKED wheel TSV3.4 (Cd ≈ 0.49).
+See `docs/VALIDATION_ANALYSIS.md` for full analysis.
+
+**Test Scenarios:**
+1. Run disc wheel in AeroCloud → expect Cd ≈ 1.0-1.3
+2. Run spoked wheel (TSV3.4) in WheelFlow → expect Cd ≈ 0.4-0.6
+
 ## Development Notes
 - Static files are served directly by FastAPI
 - Browser cache may need clearing after CSS/JS changes (Ctrl+Shift+R)
