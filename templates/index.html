@@ -118,10 +118,11 @@
                                 <div class="form-group" id="rotation-method-group">
                                     <label for="rotation-method">Rotation Method</label>
                                     <select id="rotation-method">
-                                        <option value="mrf" selected>MRF (Steady State)</option>
+                                        <option value="wall_bc" selected>Wall BC Only (Recommended)</option>
+                                        <option value="mrf">MRF (Steady State)</option>
                                         <option value="transient">AMI (Transient)</option>
                                     </select>
-                                    <small class="form-hint">MRF: faster, steady-state. AMI: more accurate, transient solver.</small>
+                                    <small class="form-hint">Wall BC: best for spoked wheels. MRF: solid/disc wheels. AMI: most accurate, slower.</small>
                                 </div>
 
                                 <div class="form-group">
@@ -141,7 +142,7 @@
                                     <select id="quality">
                                         <option value="basic">Basic (~500k cells) - Fast</option>
                                         <option value="standard" selected>Standard (~2M cells)</option>
-                                        <option value="pro">Pro (~6M cells) - Accurate</option>
+                                        <option value="pro">Pro (~12M cells) - Accurate</option>
                                     </select>
                                 </div>
 

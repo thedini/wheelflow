@@ -695,6 +695,10 @@ async def run_simulation(job_id: str):
         job["status"] = "meshing"
         job["progress"] = 15
         await run_openfoam_command(case_dir, "blockMesh")
+        job["progress"] = 18
+
+        # Extract feature edges for better surface snapping
+        await run_openfoam_command(case_dir, "surfaceFeatureExtract", parallel=False)
         job["progress"] = 20
 
         # Run snappyHexMesh in SERIAL mode
@@ -1147,7 +1151,7 @@ relaxationFactors
     rotation_method = config.get("rotation_method", "none")
     wheel_center = (0, 0, config['wheel_radius'])  # Wheel centered at origin, on ground
 
-    if rotation_method in ["mrf", "transient"] and config.get("rolling_enabled", True):
+    if rotation_method in ["mrf", "transient", "wall_bc"] and config.get("rolling_enabled", True):
         # Use rotating wall velocity for wheel
         wheel_bc = f"""    wheel
     {{
@@ -1506,14 +1510,23 @@ RAS
         },
         "pro": {
             "maxLocalCells": 2000000,
-            "maxGlobalCells": 8000000,
-            "surfaceLevel": (4, 5),
-            "bgMesh": (100, 50, 35),
+            "maxGlobalCells": 15000000,
+            "surfaceLevel": (4, 6),
+            "bgMesh": (120, 60, 42),
             "nCellsBetweenLevels": 3,
         },
     }
 
     preset = mesh_presets.get(quality, mesh_presets["standard"])
+
+    # MRF mode needs cellZone/faceZone in the rotating zone for zone creation
+    if rotation_method == "mrf":
+        rotating_zone_extras = """
+            cellZone rotatingZone;
+            faceZone rotatingZoneFaces;
+            cellZoneInside inside;"""
+    else:
+        rotating_zone_extras = ""
 
     snappy = f"""FoamFile
 {{
@@ -1568,6 +1581,10 @@ castellatedMeshControls
 
     features
     (
+        {{
+            file "wheel.eMesh";
+            level {preset['surfaceLevel'][1]};
+        }}
     );
 
     refinementSurfaces
@@ -1601,10 +1618,7 @@ castellatedMeshControls
         rotatingZone
         {{
             mode inside;
-            levels ((1E15 {preset['surfaceLevel'][0]}));
-            cellZone rotatingZone;
-            faceZone rotatingZoneFaces;
-            cellZoneInside inside;
+            levels ((1E15 {preset['surfaceLevel'][0]}));{rotating_zone_extras}
         }}
     }}
 
@@ -1671,6 +1685,27 @@ meshQualityControls
 mergeTolerance 1e-6;
 """
     (case_dir / "system" / "snappyHexMeshDict").write_text(snappy)
+
+    # surfaceFeatureExtractDict for better edge resolution on spoked wheels
+    sfe_dict = """FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaceFeatureExtractDict;
+}
+
+wheel.stl
+{
+    extractionMethod    extractFromSurface;
+    extractFromSurfaceCoeffs
+    {
+        includedAngle   150;
+    }
+    writeObj            yes;
+}
+"""
+    (case_dir / "system" / "surfaceFeatureExtractDict").write_text(sfe_dict)
 
     # Update blockMeshDict based on quality preset
     bg = preset['bgMesh']
