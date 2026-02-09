@@ -698,7 +698,7 @@ async def run_simulation(job_id: str):
         job["progress"] = 18
 
         # Extract feature edges for better surface snapping
-        await run_openfoam_command(case_dir, "surfaceFeatureExtract", parallel=False)
+        await run_openfoam_command(case_dir, "surfaceFeatures", parallel=False)
         job["progress"] = 20
 
         # Run snappyHexMesh in SERIAL mode
@@ -1686,26 +1686,37 @@ mergeTolerance 1e-6;
 """
     (case_dir / "system" / "snappyHexMeshDict").write_text(snappy)
 
-    # surfaceFeatureExtractDict for better edge resolution on spoked wheels
+    # surfaceFeaturesDict for better edge resolution on spoked wheels
     sfe_dict = """FoamFile
 {
     version     2.0;
     format      ascii;
     class       dictionary;
-    object      surfaceFeatureExtractDict;
+    object      surfaceFeaturesDict;
 }
 
-wheel.stl
+surfaces
+(
+    "wheel.stl"
+);
+
+includedAngle   150;
+
+subsetFeatures
 {
-    extractionMethod    extractFromSurface;
-    extractFromSurfaceCoeffs
-    {
-        includedAngle   150;
-    }
-    writeObj            yes;
+    nonManifoldEdges yes;
+    openEdges        yes;
 }
+
+trimFeatures
+{
+    minElem         0;
+    minLen          0;
+}
+
+writeObj        yes;
 """
-    (case_dir / "system" / "surfaceFeatureExtractDict").write_text(sfe_dict)
+    (case_dir / "system" / "surfaceFeaturesDict").write_text(sfe_dict)
 
     # Update blockMeshDict based on quality preset
     bg = preset['bgMesh']
@@ -1894,7 +1905,7 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
         args = []
 
     # Commands that don't support parallel
-    serial_only = ["blockMesh", "surfaceFeatureExtract", "checkMesh"]
+    serial_only = ["blockMesh", "surfaceFeatures", "checkMesh"]
 
     # Determine if this will actually run in parallel
     will_run_parallel = parallel and command not in serial_only

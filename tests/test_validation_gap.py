@@ -201,36 +201,37 @@ class TestWallBCRotationE2E:
 # ============================================================================
 
 class TestSurfaceFeatureExtractUnit:
-    """Unit tests for surfaceFeatureExtractDict generation."""
+    """Unit tests for surfaceFeaturesDict generation."""
 
     def test_sfe_dict_generated(self, case_dir, base_config):
-        """generate_case_files should create surfaceFeatureExtractDict."""
+        """generate_case_files should create surfaceFeaturesDict."""
         asyncio.run(generate_case_files(case_dir, base_config))
 
-        sfe_path = case_dir / "system" / "surfaceFeatureExtractDict"
+        sfe_path = case_dir / "system" / "surfaceFeaturesDict"
         assert sfe_path.exists()
 
     def test_sfe_dict_references_wheel_stl(self, case_dir, base_config):
-        """surfaceFeatureExtractDict should reference wheel.stl."""
+        """surfaceFeaturesDict should reference wheel.stl."""
         asyncio.run(generate_case_files(case_dir, base_config))
 
-        sfe = (case_dir / "system" / "surfaceFeatureExtractDict").read_text()
+        sfe = (case_dir / "system" / "surfaceFeaturesDict").read_text()
         assert "wheel.stl" in sfe
 
     def test_sfe_dict_has_included_angle(self, case_dir, base_config):
-        """surfaceFeatureExtractDict should use includedAngle 150."""
+        """surfaceFeaturesDict should use includedAngle 150."""
         asyncio.run(generate_case_files(case_dir, base_config))
 
-        sfe = (case_dir / "system" / "surfaceFeatureExtractDict").read_text()
+        sfe = (case_dir / "system" / "surfaceFeaturesDict").read_text()
         assert "includedAngle" in sfe
         assert "150" in sfe
 
-    def test_sfe_dict_uses_extract_from_surface(self, case_dir, base_config):
-        """surfaceFeatureExtractDict should use extractFromSurface method."""
+    def test_sfe_dict_has_surfaces_entry(self, case_dir, base_config):
+        """surfaceFeaturesDict should list wheel.stl in surfaces block."""
         asyncio.run(generate_case_files(case_dir, base_config))
 
-        sfe = (case_dir / "system" / "surfaceFeatureExtractDict").read_text()
-        assert "extractFromSurface" in sfe
+        sfe = (case_dir / "system" / "surfaceFeaturesDict").read_text()
+        assert "surfaces" in sfe
+        assert '"wheel.stl"' in sfe
 
     def test_snappy_references_emesh(self, case_dir, base_config):
         """snappyHexMeshDict should reference wheel.eMesh in features."""
@@ -367,7 +368,7 @@ class TestCombinedFeatures:
         assert (case_dir / "0" / "U").exists()
         assert (case_dir / "constant" / "MRFProperties").exists()
         assert (case_dir / "system" / "snappyHexMeshDict").exists()
-        assert (case_dir / "system" / "surfaceFeatureExtractDict").exists()
+        assert (case_dir / "system" / "surfaceFeaturesDict").exists()
         assert (case_dir / "system" / "blockMeshDict").exists()
 
         # Verify wall_bc specifics
@@ -378,7 +379,7 @@ class TestCombinedFeatures:
         assert "active      true" not in mrf
 
         # Verify feature extract
-        sfe = (case_dir / "system" / "surfaceFeatureExtractDict").read_text()
+        sfe = (case_dir / "system" / "surfaceFeaturesDict").read_text()
         assert "wheel.stl" in sfe
 
         # Verify pro mesh settings
