@@ -7,7 +7,7 @@
 
 set -e
 
-source /opt/openfoam13/etc/bashrc
+source /opt/openfoam13/etc/bashrc || true
 
 BASE_DIR="/home/constantine/repo/openFOAM/wheelflow"
 TEST_DIR="$BASE_DIR/cases/parallel_mesh_test"
