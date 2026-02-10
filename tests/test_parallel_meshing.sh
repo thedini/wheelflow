@@ -156,7 +156,7 @@ geometry
 }
 castellatedMeshControls
 {
-    maxLocalCells 2000000;
+    maxLocalCells MAX_LOCAL_PLACEHOLDER;
     maxGlobalCells $MAX_GLOBAL;
     minRefinementCells 10;
     nCellsBetweenLevels $NCELLS;
@@ -217,12 +217,12 @@ addLayersControls
     finalLayerThickness 0.3;
     minThickness 0.1;
     nGrow 0;
-    featureAngle 60;
-    nRelaxIter 3;
+    featureAngle 130;
+    nRelaxIter 5;
     nSmoothSurfaceNormals 1;
     nSmoothNormals 3;
     nSmoothThickness 10;
-    maxFaceThicknessRatio 0.5;
+    maxFaceThicknessRatio 0.6;
     maxThicknessToMedialRatio 0.3;
     minMedianAxisAngle 90;
     nBufferCellsNoExtrude 0;
@@ -287,6 +287,16 @@ run_test() {
 
     # Set up fresh case
     setup_base_case "$case_dir" "$quality"
+
+    # Set maxLocalCells based on core count (maxGlobalCells / nprocs * 2 for headroom)
+    if [ "$quality" = "pro" ]; then
+        local max_local=$(( 15000000 / nprocs * 2 ))
+    else
+        local max_local=$(( 2000000 / nprocs * 2 ))
+    fi
+    # Serial gets the full global limit
+    [ "$mode" = "serial" ] && max_local=15000000
+    sed -i "s/MAX_LOCAL_PLACEHOLDER/$max_local/" "$case_dir/system/snappyHexMeshDict"
 
     local snappy_exit=0
     local reconstruct_exit=0
