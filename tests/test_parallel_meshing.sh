@@ -317,25 +317,25 @@ run_test() {
         mpirun -np "$nprocs" snappyHexMesh -parallel -overwrite -case "$case_dir" > "$case_dir/log.snappyHexMesh" 2>&1 || snappy_exit=$?
 
         if [ $snappy_exit -eq 0 ]; then
-            echo "  Reconstructing mesh..."
-            reconstructParMesh -constant -case "$case_dir" > "$case_dir/log.reconstructParMesh" 2>&1 || reconstruct_exit=$?
+            echo "  Reconstructing mesh (reconstructPar -constant)..."
+            reconstructPar -constant -case "$case_dir" > "$case_dir/log.reconstructPar" 2>&1 || reconstruct_exit=$?
             # Clean up processor dirs
             rm -rf "$case_dir"/processor*
         fi
 
     elif [ "$mode" = "parallel_noreconstruct" ]; then
-        # Parallel without reconstruct - check if -overwrite works in parallel
+        # Parallel with mergeTol reconstruction
         sed -i "s/NPROCS_PLACEHOLDER/$nprocs/" "$case_dir/system/decomposeParDict"
 
         echo "  Decomposing ($nprocs cores)..."
         decomposePar -case "$case_dir" > "$case_dir/log.decomposePar" 2>&1
 
-        echo "  Running snappyHexMesh (parallel, $nprocs cores, no reconstruct)..."
+        echo "  Running snappyHexMesh (parallel, $nprocs cores, mergeTol)..."
         mpirun -np "$nprocs" snappyHexMesh -parallel -overwrite -case "$case_dir" > "$case_dir/log.snappyHexMesh" 2>&1 || snappy_exit=$?
 
         if [ $snappy_exit -eq 0 ]; then
-            echo "  Reconstructing mesh (mergeTol)..."
-            reconstructParMesh -constant -mergeTol 1e-6 -case "$case_dir" > "$case_dir/log.reconstructParMesh" 2>&1 || reconstruct_exit=$?
+            echo "  Reconstructing mesh (reconstructPar -constant)..."
+            reconstructPar -constant -case "$case_dir" > "$case_dir/log.reconstructPar" 2>&1 || reconstruct_exit=$?
             rm -rf "$case_dir"/processor*
         fi
     fi
@@ -350,7 +350,11 @@ run_test() {
         echo "  Running checkMesh..."
         checkMesh -case "$case_dir" > "$case_dir/log.checkMesh" 2>&1 || true
         cell_count=$(grep "cells:" "$case_dir/log.checkMesh" 2>/dev/null | head -1 | awk '{print $NF}')
-        max_nonortho=$(grep "Max non-orthogonality" "$case_dir/log.checkMesh" 2>/dev/null | awk '{print $NF}')
+        max_nonortho=$(grep "Mesh non-orthogonality" "$case_dir/log.checkMesh" 2>/dev/null | grep "max:" | awk -F'max: ' '{print $2}' | awk '{print $1}')
+    fi
+    # Fallback: get cell count from snappy log if checkMesh didn't find it
+    if [ "$cell_count" = "0" ] || [ -z "$cell_count" ]; then
+        cell_count=$(grep "Layer mesh" "$case_dir/log.snappyHexMesh" 2>/dev/null | grep -oP 'cells:\K[0-9]+' || echo "0")
     fi
 
     echo ""

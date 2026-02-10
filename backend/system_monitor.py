@@ -134,7 +134,7 @@ def get_openfoam_processes() -> Dict:
     # OpenFOAM process names to look for
     of_processes = [
         'blockMesh', 'snappyHexMesh', 'simpleFoam', 'pimpleFoam',
-        'decomposePar', 'reconstructPar', 'checkMesh', 'surfaceFeatureExtract',
+        'decomposePar', 'reconstructPar', 'checkMesh', 'surfaceFeatures',
         'potentialFoam', 'createPatch'
     ]
 

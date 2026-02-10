@@ -214,7 +214,7 @@ async def run_parallel_command(
         # Step 3: Reconstruct the mesh/fields
         if process.returncode == 0 and command not in ["blockMesh", "decomposePar"]:
             if command == "snappyHexMesh":
-                reconstruct_cmd = ["reconstructParMesh", "-constant"]
+                reconstruct_cmd = ["reconstructPar", "-constant"]
             else:
                 reconstruct_cmd = ["reconstructPar"]
 

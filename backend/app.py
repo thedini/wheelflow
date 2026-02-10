@@ -1968,7 +1968,7 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
         if command == "snappyHexMesh":
             print("Reconstructing mesh...")
             reconstruct_proc = await asyncio.create_subprocess_exec(
-                "reconstructParMesh", "-constant", "-mergeTol", "1e-6",
+                "reconstructPar", "-constant",
                 cwd=case_dir,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
@@ -1977,7 +1977,7 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
             stdout_r, stderr_r = await reconstruct_proc.communicate()
 
             # Log reconstruction output
-            log_file = case_dir / "log.reconstructParMesh"
+            log_file = case_dir / "log.reconstructPar"
             with open(log_file, 'w') as f:
                 f.write(stdout_r.decode(errors='replace'))
                 if stderr_r:
@@ -1985,7 +1985,7 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
                     f.write(stderr_r.decode(errors='replace'))
 
             if reconstruct_proc.returncode != 0:
-                print(f"WARNING: reconstructParMesh failed: {stderr_r.decode(errors='replace')[:200]}")
+                print(f"WARNING: reconstructPar failed: {stderr_r.decode(errors='replace')[:200]}")
 
             # Verify mesh was reconstructed by checking for wheel patch
             boundary_file = case_dir / "constant" / "polyMesh" / "boundary"
