@@ -49,6 +49,11 @@ setup_base_case() {
     cp "$TEMPLATE_CASE/system/fvSchemes" "$case_dir/system/"
     cp "$TEMPLATE_CASE/system/fvSolution" "$case_dir/system/"
 
+    # Use binary format for pro quality (ASCII reconstruction fails on large meshes)
+    if [ "$quality" = "pro" ]; then
+        sed -i 's/writeFormat.*ascii/writeFormat     binary/' "$case_dir/system/controlDict"
+    fi
+
     # surfaceFeaturesDict
     cat > "$case_dir/system/surfaceFeaturesDict" << 'SFEEOF'
 FoamFile
@@ -288,11 +293,11 @@ run_test() {
     # Set up fresh case
     setup_base_case "$case_dir" "$quality"
 
-    # Set maxLocalCells based on core count (maxGlobalCells / nprocs * 2 for headroom)
+    # Set maxLocalCells = maxGlobalCells / nprocs (no multiplier — 2x causes cell explosion)
     if [ "$quality" = "pro" ]; then
-        local max_local=$(( 15000000 / nprocs * 2 ))
+        local max_local=$(( 15000000 / nprocs ))
     else
-        local max_local=$(( 2000000 / nprocs * 2 ))
+        local max_local=$(( 2000000 / nprocs ))
     fi
     # Serial gets the full global limit
     [ "$mode" = "serial" ] && max_local=15000000
