@@ -293,11 +293,13 @@ run_test() {
     # Set up fresh case
     setup_base_case "$case_dir" "$quality"
 
-    # Set maxLocalCells = maxGlobalCells / nprocs (no multiplier — 2x causes cell explosion)
+    # maxLocalCells must match serial behavior to avoid cell explosion in parallel.
+    # Serial uses maxLocalCells=2000000 which limits per-iteration growth.
+    # In parallel, cells are spread across procs, so per-proc limit must be lower.
     if [ "$quality" = "pro" ]; then
-        local max_local=$(( 15000000 / nprocs ))
+        local max_local=2000000
     else
-        local max_local=$(( 2000000 / nprocs ))
+        local max_local=500000
     fi
     # Serial gets the full global limit
     [ "$mode" = "serial" ] && max_local=15000000
