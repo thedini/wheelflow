@@ -293,16 +293,19 @@ run_test() {
     # Set up fresh case
     setup_base_case "$case_dir" "$quality"
 
-    # maxLocalCells must match serial behavior to avoid cell explosion in parallel.
-    # Serial uses maxLocalCells=2000000 which limits per-iteration growth.
-    # In parallel, cells are spread across procs, so per-proc limit must be lower.
+    # maxLocalCells controls per-proc refinement limit. In parallel, cells are
+    # distributed across procs so each sees fewer cells, bypassing the limit.
+    # To match serial cell count (~16M for pro), we need a much lower per-proc
+    # limit. Formula: maxLocalCells_serial / nprocs (not maxGlobalCells/nprocs).
     if [ "$quality" = "pro" ]; then
-        local max_local=2000000
+        local max_local=$(( 2000000 / nprocs ))
     else
-        local max_local=500000
+        local max_local=$(( 500000 / nprocs ))
     fi
-    # Serial gets the full global limit
-    [ "$mode" = "serial" ] && max_local=15000000
+    # Minimum floor to avoid starving refinement
+    [ "$max_local" -lt 100000 ] && max_local=100000
+    # Serial gets the same maxLocalCells as the app generates
+    [ "$mode" = "serial" ] && { [ "$quality" = "pro" ] && max_local=2000000 || max_local=500000; }
     sed -i "s/MAX_LOCAL_PLACEHOLDER/$max_local/" "$case_dir/system/snappyHexMeshDict"
 
     local snappy_exit=0
