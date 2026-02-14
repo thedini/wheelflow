@@ -678,14 +678,20 @@ async def run_simulation(job_id: str):
         # Determine parallelization settings
         import multiprocessing
         num_cpus = multiprocessing.cpu_count()
-        # Use half of available CPUs (leave some for system)
-        num_procs = max(4, min(num_cpus // 2, 16))
+        # Separate core counts: 8 cores is sweet spot for meshing (benchmarked),
+        # solver scales better so allow up to 16
+        num_procs_solver = max(4, min(num_cpus // 2, 16))
+        num_procs_mesh = max(4, min(num_cpus // 2, 8))
         use_parallel = config.get("quality") in ["standard", "pro"]
         gpu_enabled = config.get("gpu_acceleration", False)
 
-        print(f"Parallel execution: {use_parallel}, using {num_procs} processors")
+        print(f"Parallel execution: {use_parallel}, mesh={num_procs_mesh} procs, solver={num_procs_solver} procs")
         if gpu_enabled:
             print("GPU acceleration enabled (AmgX for pressure solver)")
+
+        # Pass parallel mesh config for snappyHexMeshDict generation
+        config["num_procs"] = num_procs_mesh
+        config["use_parallel_mesh"] = config.get("quality") == "pro" and use_parallel
 
         # Generate OpenFOAM case files
         await generate_case_files(case_dir, config)
@@ -701,11 +707,12 @@ async def run_simulation(job_id: str):
         await run_openfoam_command(case_dir, "surfaceFeatures", parallel=False)
         job["progress"] = 20
 
-        # Run snappyHexMesh in SERIAL mode
-        # Parallel snappyHexMesh with reconstruction has issues - run serial for reliability
+        # Run snappyHexMesh - parallel for pro quality, serial for basic/standard
+        use_parallel_mesh = config.get("use_parallel_mesh", False)
         job["updated_at"] = datetime.now().isoformat()
         await run_openfoam_command(case_dir, "snappyHexMesh", ["-overwrite"],
-                                   parallel=False, num_procs=num_procs)
+                                   parallel=use_parallel_mesh, num_procs=num_procs_mesh,
+                                   gpu_enabled=gpu_enabled)
         job["progress"] = 45
 
         # Create MRF cellZone using topoSet (if MRF rotation enabled)
@@ -752,7 +759,7 @@ actions
         if use_parallel:
             try:
                 await run_openfoam_command(case_dir, "potentialFoam", ["-writephi"],
-                                          parallel=use_parallel, num_procs=num_procs)
+                                          parallel=use_parallel, num_procs=num_procs_solver)
             except Exception as e:
                 print(f"potentialFoam skipped: {e}")
 
@@ -804,13 +811,13 @@ actions
 
             print("Running transient simulation with pimpleFoam...")
             await run_openfoam_command(case_dir, "foamRun", ["-solver", "incompressibleFluid"],
-                                       parallel=use_parallel, num_procs=num_procs,
+                                       parallel=use_parallel, num_procs=num_procs_solver,
                                        gpu_enabled=gpu_enabled)
         else:
             # Steady-state simulation (SIMPLE algorithm)
             # Use foamRun with incompressibleFluid solver (replaces simpleFoam in OF13)
             await run_openfoam_command(case_dir, "foamRun", ["-solver", "incompressibleFluid"],
-                                       parallel=use_parallel, num_procs=num_procs,
+                                       parallel=use_parallel, num_procs=num_procs_solver,
                                        gpu_enabled=gpu_enabled)
 
         job["progress"] = 85
@@ -846,6 +853,7 @@ async def generate_case_files(case_dir: Path, config: dict):
     vx, vy, vz = velocity_components(speed, yaw)
     omega = config["omega"]
     air = config["air"]
+    quality = config.get("quality", "standard")
 
     # controlDict
     control_dict = f"""FoamFile
@@ -865,7 +873,7 @@ deltaT          1;
 writeControl    timeStep;
 writeInterval   100;
 purgeWrite      2;
-writeFormat     ascii;
+writeFormat     {"binary" if quality == "pro" else "ascii"};
 writePrecision  8;
 writeCompression off;
 timeFormat      general;
@@ -1519,6 +1527,14 @@ RAS
 
     preset = mesh_presets.get(quality, mesh_presets["standard"])
 
+    # For parallel meshing, scale maxLocalCells per processor
+    use_parallel_mesh = config.get("use_parallel_mesh", False)
+    num_procs = config.get("num_procs", 1)
+    if use_parallel_mesh:
+        actual_max_local = preset['maxGlobalCells'] // num_procs
+    else:
+        actual_max_local = preset['maxLocalCells']
+
     # MRF mode needs cellZone/faceZone in the rotating zone for zone creation
     if rotation_method == "mrf":
         rotating_zone_extras = """
@@ -1574,7 +1590,7 @@ geometry
 
 castellatedMeshControls
 {{
-    maxLocalCells {preset['maxLocalCells']};
+    maxLocalCells {actual_max_local};
     maxGlobalCells {preset['maxGlobalCells']};
     minRefinementCells 10;
     nCellsBetweenLevels {preset['nCellsBetweenLevels']};
@@ -1914,9 +1930,14 @@ async def run_openfoam_command(case_dir: Path, command: str, args: list = None, 
     env = get_openfoam_env_cached(gpu_enabled=gpu_enabled)
 
     if will_run_parallel:
-        # Generate decomposeParDict if needed
+        # Generate or update decomposeParDict for the requested proc count
         decompose_dict = case_dir / "system" / "decomposeParDict"
-        if not decompose_dict.exists():
+        needs_new_dict = not decompose_dict.exists()
+        if decompose_dict.exists():
+            content = decompose_dict.read_text()
+            if f"numberOfSubdomains {num_procs};" not in content:
+                needs_new_dict = True
+        if needs_new_dict:
             generate_decompose_dict(case_dir, num_procs)
 
         # Decompose the domain first (if not already done)
