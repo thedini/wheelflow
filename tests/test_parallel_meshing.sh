@@ -14,8 +14,10 @@ TEST_DIR="$BASE_DIR/cases/parallel_mesh_test"
 TEMPLATE_CASE="$BASE_DIR/cases/f95b0a5c"
 RESULTS_FILE="$TEST_DIR/results.csv"
 
-# Use the same STL
-STL_FILE="$BASE_DIR/uploads/de9928dc.stl"
+# Use the TRANSFORMED STL from the validation case (already scaled to meters, centered, positioned)
+# The raw upload STL is in millimeters - using it directly causes zero surface intersections
+# and makes the mesh explode because only shell refinement runs (no surface/feature refinement).
+STL_FILE="$TEMPLATE_CASE/constant/triSurface/wheel.stl"
 
 echo "============================================"
 echo "Parallel snappyHexMesh Test Suite"
@@ -293,17 +295,14 @@ run_test() {
     # Set up fresh case
     setup_base_case "$case_dir" "$quality"
 
-    # maxLocalCells controls per-proc refinement limit. In parallel, cells are
-    # distributed across procs so each sees fewer cells, bypassing the limit.
-    # To match serial cell count (~16M for pro), we need a much lower per-proc
-    # limit. Formula: maxLocalCells_serial / nprocs (not maxGlobalCells/nprocs).
+    # maxLocalCells = maxGlobalCells / nProcs (standard OpenFOAM practice).
+    # Previous cell count explosion was caused by using raw STL (in mm) instead
+    # of the transformed STL (in meters), not by maxLocalCells misconfiguration.
     if [ "$quality" = "pro" ]; then
-        local max_local=$(( 2000000 / nprocs ))
+        local max_local=$(( 15000000 / nprocs ))
     else
-        local max_local=$(( 500000 / nprocs ))
+        local max_local=$(( 2000000 / nprocs ))
     fi
-    # Minimum floor to avoid starving refinement
-    [ "$max_local" -lt 100000 ] && max_local=100000
     # Serial gets the same maxLocalCells as the app generates
     [ "$mode" = "serial" ] && { [ "$quality" = "pro" ] && max_local=2000000 || max_local=500000; }
     sed -i "s/MAX_LOCAL_PLACEHOLDER/$max_local/" "$case_dir/system/snappyHexMeshDict"
@@ -401,11 +400,11 @@ run_test "parallel" 16 "standard"
 run_test "parallel_noreconstruct" 8 "standard"
 
 echo ""
-echo "Phase 2: Pro quality (~12M cells) - production test"
+echo "Phase 2: Pro quality (~15M cells) - production test"
 echo "===================================================="
 
-# Serial pro (will be slow - skip if standard tests show parallel works)
-# run_test "serial" 1 "pro"
+# Serial pro baseline
+run_test "serial" 1 "pro"
 
 # Parallel pro with best core count from phase 1
 run_test "parallel" 8 "pro"
