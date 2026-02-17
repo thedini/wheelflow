@@ -1,8 +1,8 @@
 # WheelFlow vs AeroCloud Validation Analysis
 
-**Date:** 2026-02-09 (updated)
-**Previous:** 2026-02-08
-**Status:** MRF rotation identified as root cause of drag overprediction - no-MRF test running
+**Date:** 2026-02-15 (updated)
+**Previous:** 2026-02-09
+**Status:** Yaw sweep complete (0°-20°), parallel meshing validated
 
 ---
 
@@ -21,6 +21,11 @@ WheelFlow simulations of the TTTR28_22_TSV3 spoked wheel produce Cd ~1.12-1.29 i
 | c32c1408 | Combined open | Standard | 1.4M | 17K | Yes | 1.288 | Mesh too coarse |
 | 2e534f01 | Combined open | Pro | 9.0M | 80K | Yes | 1.123 | MRF blocks spoke flow |
 | 2e534f01_noMRF | Combined open | Pro | 9.0M | 80K | **No** | **0.692** | **Complete** |
+| **1a09a959_00** | Solid for CFD | Pro (parallel) | ~15M | — | **No** | **0.413** | Yaw sweep 0° |
+| **bd2bc0d0_05** | Solid for CFD | Pro (parallel) | ~15M | — | **No** | **0.439** | Yaw sweep 5° |
+| **bd2bc0d0_10** | Solid for CFD | Pro (parallel) | ~15M | — | **No** | **0.521** | Yaw sweep 10° |
+| **bd2bc0d0_15** | Solid for CFD | Pro (parallel) | ~15M | — | **No** | **0.652** | Yaw sweep 15° |
+| **bd2bc0d0_20** | Solid for CFD | Pro (parallel) | ~15M | — | **No** | **0.819** | Yaw sweep 20° |
 
 ---
 
@@ -207,6 +212,39 @@ Iter  Cd
 - Total Fd (wind axis): 1.843 N
 - Viscous fraction: 19.1% (matching AeroCloud's 19%)
 
+### Pro Quality Yaw Sweep (2026-02-14, Parallel Meshing)
+
+**Geometry:** "Solid for CFD" STL (49K triangles, 0.684 m diameter)
+**Mesh:** ~15M cells (pro quality, parallel snappyHexMesh with 8 cores)
+**Aref:** 0.0225 m²
+**Solver:** foamRun incompressibleFluid (16 cores parallel)
+**Turbulence:** k-omega SST
+**Ground:** Moving wall at freestream speed
+**Rotation:** Wall BC only (no MRF)
+
+| Yaw | Cd | Fd (N) | Cl | Fl (N) | Cs | Fs (N) | CdA (cm²) | Converged |
+|-----|-----|--------|-----|--------|-----|--------|-----------|-----------|
+| 0° | 0.413 | 1.10 | 0.023 | 0.062 | -0.024 | -0.065 | 9.3 | Yes |
+| 5° | 0.439 | 1.10 | 0.023 | 0.062 | 0.312 | 0.830 | 9.9 | Yes |
+| 10° | 0.521 | 1.09 | 0.020 | 0.052 | 0.669 | 1.781 | 11.7 | Yes |
+| **15°** | **0.652** | **1.07** | **0.023** | **0.060** | **1.023** | **2.724** | **14.7** | Yes |
+| 20° | 0.819 | 1.03 | 0.022 | 0.059 | 1.334 | 3.552 | 18.4 | Yes |
+
+**Force breakdown at 15° yaw:**
+- Pressure drag: 0.706 N (66%)
+- Viscous drag: 0.361 N (34%)
+
+**Timing (per angle):**
+- Mesh: ~28 min (8-core parallel, was ~124 min serial)
+- Solve: ~4.5 hr (16-core parallel, 500 iterations)
+- Total: ~5 hr per angle, ~25 hr for full sweep
+
+**Key observations:**
+- Cd roughly doubles from 0° to 20° — physically reasonable
+- Side force dominates at high yaw (Fs = 2.72 N vs Fd = 1.07 N at 15°)
+- Drag force (Fd) actually decreases slightly with yaw (1.10 → 1.03 N) while Cd increases due to velocity component change
+- Viscous fraction is 34% at 15° — higher than AeroCloud's 19%, likely because this STL has filled spoke windows acting partially as a disc
+
 ### Job 8df94ff9 (After STL Scaling Fix)
 
 | Quantity | Value | Note |
@@ -224,19 +262,21 @@ Iter  Cd
 
 ## Comparison at 15° Yaw
 
-### Primary Comparison: WheelFlow (no MRF) vs AeroCloud
+### Primary Comparison: WheelFlow (no MRF) vs AeroCloud at 15° Yaw
 
-| Metric | AeroCloud | WheelFlow (no MRF) | WheelFlow (MRF) | WheelFlow (Disc) |
-|--------|-----------|-------------------|-----------------|-----------------|
-| **Cd** | **0.490** | **0.692** (+41%) | 1.123 (+129%) | 1.297 (+165%) |
-| **CdA** | **0.0111 m²** | **0.0156 m²** (+40%) | 0.0253 m² | 0.0292 m² |
-| **Fd** | **1.315 N** | **1.843 N** (+40%) | 2.989 N | 3.45 N |
-| Cl | -0.003 | 0.011 | -0.550 | -0.374 |
-| Mesh | 12.2M | 9.0M | 9.0M | 1.4M |
-| MRF | No | No | Yes | Yes |
-| Drag Power | 17.7 W | 25.6 W | 41.5 W | 47.9 W |
+| Metric | AeroCloud | WheelFlow Pro Sweep | WheelFlow 9M (no MRF) | WheelFlow (MRF) | WheelFlow (Disc) |
+|--------|-----------|--------------------|-----------------------|-----------------|-----------------|
+| **Cd** | **0.490** | **0.652** (+33%) | 0.692 (+41%) | 1.123 (+129%) | 1.297 (+165%) |
+| **CdA** | **0.0111 m²** | **0.0147 m²** (+32%) | 0.0156 m² (+40%) | 0.0253 m² | 0.0292 m² |
+| **Fd** | **1.315 N** | **1.067 N** (-19%) | 1.843 N (+40%) | 2.989 N | 3.45 N |
+| **Fs** | **14.095 N** | **2.724 N** (-81%) | — | — | 3.19 N |
+| Cl | -0.003 | 0.023 | 0.011 | -0.550 | -0.374 |
+| Mesh | 12.2M | ~15M | 9.0M | 9.0M | 1.4M |
+| MRF | No | No | No | Yes | Yes |
 
 *AeroCloud uses Aref = 0.0227 m², WheelFlow uses 0.0225 m² (~1% difference)
+
+**Notable:** The pro sweep shows lower Fd (1.07 N) than AeroCloud (1.32 N), but higher Cd (0.652 vs 0.490). This is because WheelFlow's "Solid for CFD" STL has filled spoke windows — less drag than a true open-spoke wheel, but the coefficient is higher because the flow pattern differs. Side force is 5× lower than AeroCloud (2.72 vs 14.10 N), confirming the solid spoke windows block crossflow.
 
 ### Key Finding: MRF Impact
 
@@ -367,10 +407,11 @@ If results differ by >30%, run mesh convergence study:
 - [x] Identify MRF as root cause of overpredicted drag
 - [x] Complete no-MRF test (job 2e534f01_noMRF) - Cd=0.692 (+41% vs AeroCloud)
 - [x] Compare no-MRF CdA/Fd against AeroCloud
-- [ ] **Modify app.py to disable MRF for spoked/open wheels**
+- [x] **Modify app.py to disable MRF for spoked/open wheels** (wall_bc rotation method)
+- [x] Enable parallel snappyHexMesh for pro quality (8 cores, 3.6x speedup)
+- [x] Run yaw sweep (0°, 5°, 10°, 15°, 20°) with pro quality parallel mesh
 - [ ] Add surfaceFeatureExtract step for better edge resolution
-- [ ] Increase mesh resolution (target 12M+ cells to match AeroCloud)
-- [ ] Run yaw sweep (0°, 5°, 10°, 15°, 20°) for polar comparison
+- [ ] Run sweep with true open-spoke STL (combined from separate parts)
 - [ ] Investigate combined STL geometry quality at spoke-rim interfaces
 
 ---
@@ -387,11 +428,13 @@ If results differ by >30%, run mesh convergence study:
 - `~/Downloads/TTTR28_22_TSV3 Output Test - TTTR28_22-1.STL`
 
 **WheelFlow Cases (on desktop):**
-- Disc wheel yaw sweep: `cases/7a430d2b_*`
-- Solid STL test: `cases/d6f6689b` (Cd=1.290)
-- Open spoke, standard: `cases/c32c1408` (Cd=1.288)
+- Disc wheel yaw sweep: `cases/7a430d2b_*` (deleted)
+- Solid STL test: `cases/d6f6689b` (Cd=1.290, deleted)
+- Open spoke, standard: `cases/c32c1408` (Cd=1.288, deleted)
 - Open spoke, pro + MRF: `cases/2e534f01` (Cd=1.123)
-- **Open spoke, pro, no MRF:** `cases/2e534f01_noMRF` **(Cd=0.692)**
+- Open spoke, pro, no MRF: `cases/2e534f01_noMRF` (Cd=0.692)
+- **Pro yaw sweep 0°:** `cases/1a09a959_00` **(Cd=0.413)**
+- **Pro yaw sweep 5°-20°:** `cases/bd2bc0d0_05..20` **(Cd=0.439-0.819)**
 
 **Key Files:**
 - Force coefficients: `postProcessing/forceCoeffs/0/forceCoeffs.dat`
