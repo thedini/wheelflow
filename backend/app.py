@@ -366,6 +366,13 @@ async def start_simulation(
     quality: str = Form("standard"),
     gpu_acceleration: bool = Form(False),
     rotation_method: str = Form("mrf"),  # none, mrf, transient
+    num_iterations: int = Form(500),
+    # Override parameters for sensitivity studies (optional)
+    k_inlet_override: Optional[float] = Form(None),
+    omega_inlet_override: Optional[float] = Form(None),
+    domain_mode: str = Form("scaled"),  # "scaled" (5D/10D) or "fixed" (old hardcoded)
+    n_layers_override: Optional[int] = Form(None),
+    included_angle: int = Form(120),
 ):
     """Start a new CFD simulation"""
 
@@ -388,7 +395,13 @@ async def start_simulation(
         "rotation_method": rotation_method,  # none, mrf, transient
         "omega": calculate_omega(speed, wheel_radius),
         "reynolds": calculate_reynolds(speed, wheel_radius * 2),
-        "air": get_air_properties()
+        "air": get_air_properties(),
+        "num_iterations": num_iterations,
+        "k_inlet_override": k_inlet_override,
+        "omega_inlet_override": omega_inlet_override,
+        "domain_mode": domain_mode,
+        "n_layers_override": n_layers_override,
+        "included_angle": included_angle,
     }
 
     # Create job in database and cache
@@ -417,6 +430,12 @@ async def start_batch_simulation(
     quality: str = Form("standard"),
     gpu_acceleration: bool = Form(False),
     rotation_method: str = Form("mrf"),
+    num_iterations: int = Form(500),
+    k_inlet_override: Optional[float] = Form(None),
+    omega_inlet_override: Optional[float] = Form(None),
+    domain_mode: str = Form("scaled"),
+    n_layers_override: Optional[int] = Form(None),
+    included_angle: int = Form(120),
 ):
     """
     Start a batch CFD simulation for multiple yaw angles.
@@ -456,6 +475,12 @@ async def start_batch_simulation(
             "air": get_air_properties(),
             "batch_id": batch_id,
             "batch_yaw_angles": yaw_list,
+            "num_iterations": num_iterations,
+            "k_inlet_override": k_inlet_override,
+            "omega_inlet_override": omega_inlet_override,
+            "domain_mode": domain_mode,
+            "n_layers_override": n_layers_override,
+            "included_angle": included_angle,
         }
 
         # Create job in database and cache
@@ -868,7 +893,7 @@ application     simpleFoam;
 startFrom       startTime;
 startTime       0;
 stopAt          endTime;
-endTime         500;
+endTime         {config.get('num_iterations', 500)};
 deltaT          1;
 writeControl    timeStep;
 writeInterval   100;
@@ -1318,99 +1343,112 @@ boundaryField
 """
     (case_dir / "0" / "p").write_text(p_file)
 
+    # Compute turbulence inlet values from speed and geometry
+    # TI = 0.5% (low-turbulence cycling conditions)
+    ti = 0.005
+    wheel_diameter = config['wheel_radius'] * 2
+    k_inlet = 1.5 * (speed * ti) ** 2
+    l_turb = 0.07 * wheel_diameter  # turbulent length scale from wheel diameter
+    omega_inlet = k_inlet ** 0.5 / (0.09 ** 0.25 * l_turb)
+    # Allow overrides for sensitivity studies
+    if config.get('k_inlet_override') is not None:
+        k_inlet = config['k_inlet_override']
+    if config.get('omega_inlet_override') is not None:
+        omega_inlet = config['omega_inlet_override']
+
     # Turbulence - k
-    k_file = """FoamFile
-{
+    k_file = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       volScalarField;
     object      k;
-}
+}}
 
 dimensions      [0 2 -2 0 0 0 0];
 
-internalField   uniform 0.1;
+internalField   uniform {k_inlet:.6f};
 
 boundaryField
-{
+{{
     inlet
-    {
+    {{
         type            fixedValue;
-        value           uniform 0.1;
-    }
+        value           uniform {k_inlet:.6f};
+    }}
     outlet
-    {
+    {{
         type            inletOutlet;
-        inletValue      uniform 0.1;
+        inletValue      uniform {k_inlet:.6f};
         value           $internalField;
-    }
+    }}
     ground
-    {
+    {{
         type            kqRWallFunction;
-        value           uniform 0.1;
-    }
+        value           uniform {k_inlet:.6f};
+    }}
     top
-    {
+    {{
         type            slip;
-    }
+    }}
     sides
-    {
+    {{
         type            slip;
-    }
+    }}
     wheel
-    {
+    {{
         type            kqRWallFunction;
-        value           uniform 0.1;
-    }
-}
+        value           uniform {k_inlet:.6f};
+    }}
+}}
 """
     (case_dir / "0" / "k").write_text(k_file)
 
     # Turbulence - omega
-    omega_file = """FoamFile
-{
+    omega_file = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       volScalarField;
     object      omega;
-}
+}}
 
 dimensions      [0 0 -1 0 0 0 0];
 
-internalField   uniform 1;
+internalField   uniform {omega_inlet:.4f};
 
 boundaryField
-{
+{{
     inlet
-    {
+    {{
         type            fixedValue;
-        value           uniform 1;
-    }
+        value           uniform {omega_inlet:.4f};
+    }}
     outlet
-    {
+    {{
         type            inletOutlet;
-        inletValue      uniform 1;
+        inletValue      uniform {omega_inlet:.4f};
         value           $internalField;
-    }
+    }}
     ground
-    {
+    {{
         type            omegaWallFunction;
-        value           uniform 1;
-    }
+        value           uniform {omega_inlet:.4f};
+    }}
     top
-    {
+    {{
         type            slip;
-    }
+    }}
     sides
-    {
+    {{
         type            slip;
-    }
+    }}
     wheel
-    {
+    {{
         type            omegaWallFunction;
-        value           uniform 1;
-    }
-}
+        value           uniform {omega_inlet:.4f};
+    }}
+}}
 """
     (case_dir / "0" / "omega").write_text(omega_file)
 
@@ -1508,6 +1546,8 @@ RAS
             "surfaceLevel": (2, 3),
             "bgMesh": (50, 25, 15),  # Background mesh cells (x, y, z)
             "nCellsBetweenLevels": 2,
+            "nLayers": 3,
+            "layerExpansion": 1.2,
         },
         "standard": {
             "maxLocalCells": 500000,
@@ -1515,6 +1555,8 @@ RAS
             "surfaceLevel": (3, 4),
             "bgMesh": (70, 35, 25),
             "nCellsBetweenLevels": 3,
+            "nLayers": 5,
+            "layerExpansion": 1.2,
         },
         "pro": {
             "maxLocalCells": 2000000,
@@ -1522,6 +1564,8 @@ RAS
             "surfaceLevel": (4, 6),
             "bgMesh": (120, 60, 42),
             "nCellsBetweenLevels": 3,
+            "nLayers": 10,
+            "layerExpansion": 1.15,
         },
     }
 
@@ -1650,7 +1694,7 @@ snapControls
     nRelaxIter 5;
     nFeatureSnapIter 10;
     implicitFeatureSnap true;
-    explicitFeatureSnap false;
+    explicitFeatureSnap true;
     multiRegionFeatureSnap false;
 }}
 
@@ -1661,10 +1705,10 @@ addLayersControls
     {{
         wheel
         {{
-            nSurfaceLayers 3;
+            nSurfaceLayers {config.get('n_layers_override') or preset['nLayers']};
         }}
     }}
-    expansionRatio 1.2;
+    expansionRatio {1.2 if config.get('n_layers_override') else preset['layerExpansion']};
     finalLayerThickness 0.3;
     minThickness 0.1;
     nGrow 0;
@@ -1703,32 +1747,33 @@ mergeTolerance 1e-6;
     (case_dir / "system" / "snappyHexMeshDict").write_text(snappy)
 
     # surfaceFeaturesDict for better edge resolution on spoked wheels
-    sfe_dict = """FoamFile
-{
+    included_angle = config.get('included_angle', 150)
+    sfe_dict = f"""FoamFile
+{{
     version     2.0;
     format      ascii;
     class       dictionary;
     object      surfaceFeaturesDict;
-}
+}}
 
 surfaces
 (
     "wheel.stl"
 );
 
-includedAngle   150;
+includedAngle   {included_angle};
 
 subsetFeatures
-{
+{{
     nonManifoldEdges yes;
     openEdges        yes;
-}
+}}
 
 trimFeatures
-{
+{{
     minElem         0;
     minLen          0;
-}
+}}
 
 writeObj        yes;
 """
@@ -1736,6 +1781,29 @@ writeObj        yes;
 
     # Update blockMeshDict based on quality preset
     bg = preset['bgMesh']
+    domain_mode = config.get('domain_mode', 'scaled')
+    if domain_mode == 'fixed':
+        # Legacy fixed domain
+        x_min, x_max = -2, 5
+        y_half = 1.5
+        z_max = 2
+        bg_x, bg_y, bg_z = bg[0], bg[1], bg[2]
+    else:
+        # Domain scaled to wheel diameter: 5D upstream, 10D downstream, 5D sides, 5D height
+        D = config['wheel_radius'] * 2
+        x_min = -5 * D
+        x_max = 10 * D
+        y_half = 5 * D
+        z_max = 5 * D
+        # Scale background cell counts proportionally to domain volume change
+        # Old domain: 7 x 3 x 2 = 42 m³; new domain scales with D
+        old_vol = 7 * 3 * 2
+        new_vol = (x_max - x_min) * (2 * y_half) * z_max
+        vol_ratio = new_vol / old_vol
+        cell_scale = vol_ratio ** (1.0 / 3.0)
+        bg_x = round(bg[0] * cell_scale)
+        bg_y = round(bg[1] * cell_scale)
+        bg_z = round(bg[2] * cell_scale)
     block_mesh = f"""FoamFile
 {{
     version     2.0;
@@ -1748,19 +1816,19 @@ scale 1;
 
 vertices
 (
-    (-2 -1.5 0)
-    ( 5 -1.5 0)
-    ( 5  1.5 0)
-    (-2  1.5 0)
-    (-2 -1.5 2)
-    ( 5 -1.5 2)
-    ( 5  1.5 2)
-    (-2  1.5 2)
+    ({x_min:.4f} {-y_half:.4f} 0)
+    ({x_max:.4f} {-y_half:.4f} 0)
+    ({x_max:.4f} {y_half:.4f} 0)
+    ({x_min:.4f} {y_half:.4f} 0)
+    ({x_min:.4f} {-y_half:.4f} {z_max:.4f})
+    ({x_max:.4f} {-y_half:.4f} {z_max:.4f})
+    ({x_max:.4f} {y_half:.4f} {z_max:.4f})
+    ({x_min:.4f} {y_half:.4f} {z_max:.4f})
 );
 
 blocks
 (
-    hex (0 1 2 3 4 5 6 7) ({bg[0]} {bg[1]} {bg[2]}) simpleGrading (1 1 1)
+    hex (0 1 2 3 4 5 6 7) ({bg_x} {bg_y} {bg_z}) simpleGrading (1 1 1)
 );
 
 edges
