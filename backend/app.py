@@ -1598,7 +1598,7 @@ RAS
 
 castellatedMesh true;
 snap            true;
-addLayers       true;
+addLayers       false;
 
 geometry
 {{
