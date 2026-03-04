@@ -1705,7 +1705,7 @@ addLayersControls
     {{
         wheel
         {{
-            nSurfaceLayers {config.get('n_layers_override') or preset['nLayers']};
+            nSurfaceLayers 0;
         }}
     }}
     expansionRatio {1.2 if config.get('n_layers_override') else preset['layerExpansion']};
@@ -1717,7 +1717,7 @@ addLayersControls
     nSmoothSurfaceNormals 1;
     nSmoothNormals 3;
     nSmoothThickness 10;
-    maxFaceThicknessRatio 0.5;
+    maxFaceThicknessRatio 0.6;
     maxThicknessToMedialRatio 0.3;
     minMedianAxisAngle 90;
     nBufferCellsNoExtrude 0;
