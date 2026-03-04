@@ -1564,7 +1564,7 @@ RAS
             "surfaceLevel": (4, 6),
             "bgMesh": (120, 60, 42),
             "nCellsBetweenLevels": 3,
-            "nLayers": 10,
+            "nLayers": 3,
             "layerExpansion": 1.15,
         },
     }
