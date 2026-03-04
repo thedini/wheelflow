@@ -441,3 +441,30 @@ If results differ by >30%, run mesh convergence study:
 - Raw forces: `postProcessing/forces/0/forces.dat`
 - Wheel STL: `constant/triSurface/wheel.stl`
 - MRF config: `constant/MRFProperties`
+
+---
+
+## Boundary Layer (nLayers) Tuning Notes
+
+With `explicitFeatureSnap true` (added in #30), snappyHexMesh snaps mesh vertices to extracted feature edges from `wheel.eMesh`. This creates sharper edges but makes layer addition more fragile.
+
+### Crash: "Multiple outside loops" in combineFaces
+
+**Trigger:** `nSurfaceLayers >= 10` with `explicitFeatureSnap true` on spoked wheel geometry. The sharp feature edges create face topologies that `combineFaces::getOutsideFace` cannot handle during the patch face merging step of layer insertion.
+
+**Current setting:** `nLayers = 3` for pro quality (matches previous working runs).
+
+### Options for increasing layers in future
+
+1. **Reduce to 5 layers** — moderate boundary layer resolution, may work with relaxed tolerances
+2. **Add relaxation parameters** — `maxFaceThicknessRatio 0.6`, `nRelaxedIter 20` make layer addition more forgiving of complex face topologies
+3. **Keep at 3 layers** — sufficient for y+ ~30-100 wall function approach (k-omega SST), isolates the effect of `explicitFeatureSnap` on Cd/Fs accuracy
+4. **Disable layers on wheel, add to ground only** — avoids the complex spoke geometry entirely
+
+### Quality preset layer defaults
+
+| Quality  | nLayers | expansionRatio | Notes |
+|----------|---------|----------------|-------|
+| basic    | 3       | 1.2            | |
+| standard | 5       | 1.2            | |
+| pro      | 3       | 1.15           | Reduced from 10 due to explicitFeatureSnap crash |
