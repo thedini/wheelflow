@@ -1598,7 +1598,7 @@ RAS
 
 castellatedMesh true;
 snap            true;
-addLayers       false;
+addLayers       {"true" if config.get('n_layers_override') else "false"};
 
 geometry
 {{
@@ -1705,7 +1705,7 @@ addLayersControls
     {{
         wheel
         {{
-            nSurfaceLayers 0;
+            nSurfaceLayers {config.get('n_layers_override', 0)};
         }}
     }}
     expansionRatio {1.2 if config.get('n_layers_override') else preset['layerExpansion']};
@@ -1748,7 +1748,7 @@ mergeTolerance 1e-6;
     (case_dir / "system" / "snappyHexMeshDict").write_text(snappy)
 
     # surfaceFeaturesDict for better edge resolution on spoked wheels
-    included_angle = config.get('included_angle', 150)
+    included_angle = config.get('included_angle', 120)
     sfe_dict = f"""FoamFile
 {{
     version     2.0;
