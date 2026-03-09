@@ -218,12 +218,12 @@ class TestSurfaceFeatureExtractUnit:
         assert "wheel.stl" in sfe
 
     def test_sfe_dict_has_included_angle(self, case_dir, base_config):
-        """surfaceFeaturesDict should use includedAngle 150."""
+        """surfaceFeaturesDict should use includedAngle 120."""
         asyncio.run(generate_case_files(case_dir, base_config))
 
         sfe = (case_dir / "system" / "surfaceFeaturesDict").read_text()
         assert "includedAngle" in sfe
-        assert "150" in sfe
+        assert "120" in sfe
 
     def test_sfe_dict_has_surfaces_entry(self, case_dir, base_config):
         """surfaceFeaturesDict should list wheel.stl in surfaces block."""
@@ -286,12 +286,16 @@ class TestProMeshResolutionUnit:
         assert "level (4 6)" in snappy
 
     def test_pro_background_mesh_increased(self, case_dir, base_config):
-        """Pro preset should have increased background mesh (120, 60, 42)."""
+        """Pro preset should scale background mesh to larger domain."""
         base_config["quality"] = "pro"
         asyncio.run(generate_case_files(case_dir, base_config))
 
         block_mesh = (case_dir / "system" / "blockMeshDict").read_text()
-        assert "(120 60 42)" in block_mesh
+        # Domain is scaled to 5D/10D/5D/5D; with D=0.65m, bg cells scale up
+        # from (120, 60, 42) by ~1.7x to (204, 102, 71)
+        assert "204" in block_mesh
+        assert "102" in block_mesh
+        assert "71" in block_mesh
 
     def test_standard_preset_unchanged(self, case_dir, base_config):
         """Standard preset should remain at 2M cells."""
@@ -391,7 +395,8 @@ class TestCombinedFeatures:
         assert "cellZone" not in snappy
 
         block_mesh = (case_dir / "system" / "blockMeshDict").read_text()
-        assert "(120 60 42)" in block_mesh
+        # Domain scaled to 5D/10D/5D/5D with D=0.65m
+        assert "204" in block_mesh
 
     def test_mrf_pro_with_feature_extract(self, case_dir, base_config):
         """MRF + pro quality should still produce cellZone and active MRF."""
