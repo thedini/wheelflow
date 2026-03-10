@@ -1741,6 +1741,22 @@ meshQualityControls
     minTriangleTwist -1;
     nSmoothScale 4;
     errorReduction 0.75;
+
+    relaxed
+    {{
+        maxNonOrtho 75;
+        maxBoundarySkewness 30;
+        maxInternalSkewness 6;
+        maxConcave 100;
+        minVol 1e-15;
+        minTetQuality -1e30;
+        minArea -1;
+        minTwist -0.5;
+        minDeterminant 0.0005;
+        minFaceWeight 0.02;
+        minVolRatio 0.005;
+        minTriangleTwist -1;
+    }}
 }}
 
 mergeTolerance 1e-6;
