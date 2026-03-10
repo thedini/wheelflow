@@ -1579,6 +1579,36 @@ RAS
     else:
         actual_max_local = preset['maxLocalCells']
 
+    # Compute domain dimensions (used by both snappyHexMesh and blockMesh)
+    bg = preset['bgMesh']
+    domain_mode = config.get('domain_mode', 'scaled')
+    if domain_mode == 'fixed':
+        x_min, x_max = -2.0, 5.0
+        y_half = 1.5
+        z_max = 2.0
+        bg_x, bg_y, bg_z = bg[0], bg[1], bg[2]
+    else:
+        D = config['wheel_radius'] * 2
+        x_min = -5 * D
+        x_max = 10 * D
+        y_half = 5 * D
+        z_max = 5 * D
+        old_vol = 7 * 3 * 2
+        new_vol = (x_max - x_min) * (2 * y_half) * z_max
+        vol_ratio = new_vol / old_vol
+        cell_scale = vol_ratio ** (1.0 / 3.0)
+        bg_x = round(bg[0] * cell_scale)
+        bg_y = round(bg[1] * cell_scale)
+        bg_z = round(bg[2] * cell_scale)
+
+    # Scale refinement boxes to domain size
+    # refinementBox: upstream 25% to downstream 30%, ±60% of half-width, ground to 1/3 height
+    ref_box_min = (x_min * 0.25, -y_half * 0.4, 0)
+    ref_box_max = (x_max * 0.3, y_half * 0.4, z_max * 0.3)
+    # wakeRegion: starts just behind wheel, narrower and lower
+    wake_min = (0.3, -y_half * 0.2, 0)
+    wake_max = (x_max * 0.45, y_half * 0.2, z_max * 0.25)
+
     # MRF mode needs cellZone/faceZone in the rotating zone for zone creation
     if rotation_method == "mrf":
         rotating_zone_extras = """
@@ -1611,15 +1641,15 @@ geometry
     refinementBox
     {{
         type searchableBox;
-        min (-0.5 -0.6 0);
-        max (2.0 0.6 1.0);
+        min ({ref_box_min[0]:.4f} {ref_box_min[1]:.4f} {ref_box_min[2]:.4f});
+        max ({ref_box_max[0]:.4f} {ref_box_max[1]:.4f} {ref_box_max[2]:.4f});
     }}
 
     wakeRegion
     {{
         type searchableBox;
-        min (0.3 -0.3 0);
-        max (3.0 0.3 0.8);
+        min ({wake_min[0]:.4f} {wake_min[1]:.4f} {wake_min[2]:.4f});
+        max ({wake_max[0]:.4f} {wake_max[1]:.4f} {wake_max[2]:.4f});
     }}
 
     // MRF rotation zone - cylinder around the wheel
@@ -1796,31 +1826,7 @@ writeObj        yes;
 """
     (case_dir / "system" / "surfaceFeaturesDict").write_text(sfe_dict)
 
-    # Update blockMeshDict based on quality preset
-    bg = preset['bgMesh']
-    domain_mode = config.get('domain_mode', 'scaled')
-    if domain_mode == 'fixed':
-        # Legacy fixed domain
-        x_min, x_max = -2, 5
-        y_half = 1.5
-        z_max = 2
-        bg_x, bg_y, bg_z = bg[0], bg[1], bg[2]
-    else:
-        # Domain scaled to wheel diameter: 5D upstream, 10D downstream, 5D sides, 5D height
-        D = config['wheel_radius'] * 2
-        x_min = -5 * D
-        x_max = 10 * D
-        y_half = 5 * D
-        z_max = 5 * D
-        # Scale background cell counts proportionally to domain volume change
-        # Old domain: 7 x 3 x 2 = 42 m³; new domain scales with D
-        old_vol = 7 * 3 * 2
-        new_vol = (x_max - x_min) * (2 * y_half) * z_max
-        vol_ratio = new_vol / old_vol
-        cell_scale = vol_ratio ** (1.0 / 3.0)
-        bg_x = round(bg[0] * cell_scale)
-        bg_y = round(bg[1] * cell_scale)
-        bg_z = round(bg[2] * cell_scale)
+    # blockMeshDict uses domain dimensions computed above
     block_mesh = f"""FoamFile
 {{
     version     2.0;
