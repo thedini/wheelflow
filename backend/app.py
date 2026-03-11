@@ -1601,13 +1601,14 @@ RAS
         bg_y = round(bg[1] * cell_scale)
         bg_z = round(bg[2] * cell_scale)
 
-    # Scale refinement boxes to domain size
-    # refinementBox: upstream 25% to downstream 30%, ±60% of half-width, ground to 1/3 height
-    ref_box_min = (x_min * 0.25, -y_half * 0.4, 0)
-    ref_box_max = (x_max * 0.3, y_half * 0.4, z_max * 0.3)
-    # wakeRegion: starts just behind wheel, narrower and lower
-    wake_min = (0.3, -y_half * 0.2, 0)
-    wake_max = (x_max * 0.45, y_half * 0.2, z_max * 0.25)
+    # Refinement boxes stay wheel-relative regardless of domain size
+    # The domain scales for blockage, but the wake and refinement zones
+    # are physically determined by the wheel geometry
+    D = config['wheel_radius'] * 2
+    ref_box_min = (-1.5 * D, -1.0 * D, 0)
+    ref_box_max = (4.0 * D, 1.0 * D, 1.5 * D)
+    wake_min = (0.5 * D, -0.5 * D, 0)
+    wake_max = (6.0 * D, 0.5 * D, 1.2 * D)
 
     # MRF mode needs cellZone/faceZone in the rotating zone for zone creation
     if rotation_method == "mrf":
