@@ -1601,14 +1601,13 @@ RAS
         bg_y = round(bg[1] * cell_scale)
         bg_z = round(bg[2] * cell_scale)
 
-    # Refinement boxes stay wheel-relative regardless of domain size
-    # The domain scales for blockage, but the wake and refinement zones
-    # are physically determined by the wheel geometry
-    D = config['wheel_radius'] * 2
-    ref_box_min = (-1.5 * D, -1.0 * D, 0)
-    ref_box_max = (4.0 * D, 1.0 * D, 1.5 * D)
-    wake_min = (0.5 * D, -0.5 * D, 0)
-    wake_max = (6.0 * D, 0.5 * D, 1.2 * D)
+    # Refinement boxes: fixed sizes validated against AeroCloud reference
+    # These produce ~16M cells at pro quality and converge in 200 iterations
+    # D-scaling was tried but produced 25M cells with convergence issues
+    ref_box_min = (-0.5, -0.6, 0)
+    ref_box_max = (2.0, 0.6, 1.0)
+    wake_min = (0.3, -0.3, 0)
+    wake_max = (3.0, 0.3, 0.8)
 
     # MRF mode needs cellZone/faceZone in the rotating zone for zone creation
     if rotation_method == "mrf":
